@@ -1,0 +1,7 @@
+httpx
+pycryptodome
+protobuf-decoder
+protobuf>=7.35.1,<8
+requests
+aiohttp
+blackboxprotobuf
