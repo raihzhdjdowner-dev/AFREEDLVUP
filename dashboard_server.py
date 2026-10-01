@@ -37,32 +37,10 @@ except Exception:
 
 
 
-# ==================== RAILWAY PERSISTENT STORAGE ====================
-PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.environ.get("RAILWAY_VOLUME_MOUNT_PATH") or os.path.join(PROJECT_DIR, "data")
-os.makedirs(DATA_DIR, exist_ok=True)
-
-def _persistent_path(filename: str) -> str:
-    return os.path.join(DATA_DIR, filename)
-
-def _migrate_legacy_file(filename: str) -> str:
-    target = _persistent_path(filename)
-    legacy = os.path.join(PROJECT_DIR, filename)
-    try:
-        if not os.path.exists(target) and os.path.isfile(legacy) and os.path.abspath(target) != os.path.abspath(legacy):
-            import shutil
-            shutil.copy2(legacy, target)
-            print(f"[PERSISTENCE] Migrated {filename} -> {target}")
-    except Exception as e:
-        print(f"[PERSISTENCE] Migration skipped for {filename}: {e}")
-    return target
-
 # ==================== UPI PAYMENT SYSTEM ====================
-PAYMENT_CONFIG_FILE = _migrate_legacy_file("payment_config.json")
-PAYMENT_REQUESTS_FILE = _migrate_legacy_file("payment_requests.json")
-PAYMENT_UPLOAD_DIR = os.path.join(DATA_DIR, "payment_uploads")
-os.makedirs(PAYMENT_UPLOAD_DIR, exist_ok=True)
-print(f"[PERSISTENCE] DATA_DIR={DATA_DIR}")
+PAYMENT_CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "payment_config.json")
+PAYMENT_REQUESTS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "payment_requests.json")
+PAYMENT_UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "payment_uploads")
 DEFAULT_PAYMENT_CONFIG = {
     "upi_id": "yourupi@upi",
     "qr_file": "",
@@ -190,8 +168,6 @@ class BotState:
         self.refresh_callbacks: Dict[str, Any] = {}
         self.account_credentials: Dict[str, Dict[str, Any]] = {}
         self.active_writers: Dict[str, set] = {}
-        self.active_match_tasks: Dict[str, set] = {}
-        self.active_aux_tasks: Dict[str, set] = {}
         self.account_links: Dict[str, str] = {}          # legacy alias
 
     # ---------- writers ----------
@@ -207,114 +183,19 @@ class BotState:
             if not s:
                 self.active_writers.pop(uid_str, None)
 
-    def _runtime_candidates(self, uid: str):
-        uid_str = str(uid or "").strip()
-        candidates = set()
-        if not uid_str:
-            return candidates
-        candidates.add(uid_str)
-        for mapping in (self.auth_to_game_id, self.game_to_auth_id, self.account_token_map):
-            mapped = mapping.get(uid_str)
-            if mapped:
-                candidates.add(str(mapped))
-                candidates.add(str(mapped)[:16])
-        acc = self.accounts.get(uid_str)
-        if acc:
-            for key in ("uid", "actual_uid", "display_uid", "auth_uid", "token"):
-                val = acc.get(key)
-                if val:
-                    candidates.add(str(val))
-                    if key == "token":
-                        candidates.add(str(val)[:16])
-        cred = self.account_credentials.get(uid_str)
-        if cred:
-            for key in ("account_id", "auth_uid", "token", "auth_token"):
-                val = cred.get(key)
-                if val:
-                    candidates.add(str(val))
-                    if key in ("token", "auth_token"):
-                        candidates.add(str(val)[:16])
-        return {c for c in candidates if c}
-
-    def register_match_task(self, uid: str, task):
-        for c in self._runtime_candidates(uid) or {str(uid)}:
-            self.active_match_tasks.setdefault(c, set()).add(task)
-
-    def unregister_match_task(self, uid: str, task):
-        for c in list(self._runtime_candidates(uid) or {str(uid)}):
-            tasks = self.active_match_tasks.get(c)
-            if tasks:
-                tasks.discard(task)
-                if not tasks:
-                    self.active_match_tasks.pop(c, None)
-
-    def register_aux_task(self, uid: str, task):
-        for c in self._runtime_candidates(uid) or {str(uid)}:
-            self.active_aux_tasks.setdefault(c, set()).add(task)
-
-    def unregister_aux_task(self, uid: str, task):
-        for c in list(self._runtime_candidates(uid) or {str(uid)}):
-            tasks = self.active_aux_tasks.get(c)
-            if tasks:
-                tasks.discard(task)
-                if not tasks:
-                    self.active_aux_tasks.pop(c, None)
-
-    def cancel_account_runtime(self, uid: str, reason: str = "manual") -> int:
-        candidates = self._runtime_candidates(uid) or {str(uid)}
-        tasks = set()
-        for c in candidates:
-            task = self.account_workers.get(c)
-            if task:
-                tasks.add(task)
-            tasks.update(self.active_match_tasks.get(c, set()))
-            tasks.update(self.active_aux_tasks.get(c, set()))
-
-        # Close every live TCP writer before cancelling workers.
-        for c in list(candidates):
-            for w in list(self.active_writers.get(c, set())):
-                try:
-                    if not (hasattr(w, "is_closing") and w.is_closing()):
-                        w.close()
-                except Exception:
-                    pass
-            self.active_writers.pop(c, None)
-
-        cancelled = 0
-        for task in tasks:
-            try:
-                if not task.done():
-                    task.cancel()
-                    cancelled += 1
-            except Exception:
-                pass
-
-        self.log(f"[RUNTIME] {reason.upper()} UID {str(uid)} | cancelled={cancelled}", "warning", str(uid))
-        return cancelled
-
-    def clear_account_runtime_maps(self, uid: str):
-        candidates = self._runtime_candidates(uid) or {str(uid)}
-        for c in candidates:
-            self.paused_accounts.discard(c)
-            self.account_workers.pop(c, None)
-            self.account_credentials.pop(c, None)
-            self.active_writers.pop(c, None)
-            self.active_match_tasks.pop(c, None)
-            self.active_aux_tasks.pop(c, None)
-        for a, g in list(self.auth_to_game_id.items()):
-            if a in candidates or g in candidates:
-                self.auth_to_game_id.pop(a, None)
-        for g, a in list(self.game_to_auth_id.items()):
-            if g in candidates or a in candidates:
-                self.game_to_auth_id.pop(g, None)
-        for k, v in list(self.account_token_map.items()):
-            if k in candidates or str(v) in candidates:
-                self.account_token_map.pop(k, None)
-
     def close_writers_for_account(self, uid: str):
-        candidates = self._runtime_candidates(uid) or {str(uid)}
+        uid_str = str(uid)
+        candidates = {uid_str}
+        if uid_str in self.auth_to_game_id:
+            candidates.add(str(self.auth_to_game_id[uid_str]))
+        if uid_str in self.game_to_auth_id:
+            candidates.add(str(self.game_to_auth_id[uid_str]))
+        if uid_str in self.account_token_map:
+            mapped = self.account_token_map[uid_str]
+            candidates.add(str(mapped))
+            candidates.add(str(mapped)[:16])
         for c in list(candidates):
-            for w in list(self.active_writers.get(c, set())):
+            for w in list(self.active_writers.get(c, [])):
                 try:
                     if hasattr(w, "is_closing") and w.is_closing():
                         continue
@@ -534,14 +415,7 @@ class BotState:
         if is_now_paused:
             for c in candidates:
                 self.paused_accounts.add(c)
-            self.close_writers_for_account(uid_str)
-            for c in list(candidates):
-                for task in list(self.active_match_tasks.get(c, set())):
-                    try:
-                        if not task.done():
-                            task.cancel()
-                    except Exception:
-                        pass
+                self.close_writers_for_account(c)
             if target_acc:
                 target_acc["is_paused"] = True
                 target_acc["paused_at"] = time.time()
@@ -649,7 +523,7 @@ def load_template(name: str) -> str:
 
 
 # ==================== POPUP CONFIG ====================
-POPUP_CONFIG_FILE = _migrate_legacy_file("popup_config.json")
+POPUP_CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "popup_config.json")
 
 DEFAULT_POPUP = {
     "enabled": True,
@@ -1087,20 +961,16 @@ def _build_user_accounts(username: str, user: Dict[str, Any]) -> List[Dict[str, 
         merged = None
 
         for bot_uid, bot_acc in bot_state.accounts.items():
+            owner_matches = (str(bot_acc.get("owner", "")) == str(username))
             bot_uid_str = str(bot_uid)
             bot_actual = str(bot_acc.get("actual_uid", ""))
             bot_display = str(bot_acc.get("display_uid", ""))
-            bot_auth = str(bot_acc.get("auth_uid", ""))
-            bot_token = str(bot_acc.get("token", ""))
-            if (bot_uid_str == user_uid or bot_actual == user_uid or
-                    bot_display == user_uid or bot_auth == user_uid or
-                    (user_token_prefix and (bot_uid_str == user_token_prefix or
-                                            bot_token[:20] == user_token_prefix))):
-                # A proven match from this user's stored UID/token is enough to
-                # attach the live native-login account to this dashboard user.
-                if not bot_acc.get("owner"):
-                    bot_acc["owner"] = username
+            identifier_matches = (bot_uid_str == user_uid or bot_actual == user_uid or
+                    bot_display == user_uid or
+                    (user_token_prefix and (bot_uid_str == user_token_prefix or bot_uid_str == f"tok_{user_token_prefix}")))
+            if (owner_matches and identifier_matches) or (identifier_matches and not bot_acc.get("owner")):
                 merged = dict(bot_acc)
+                merged["owner"] = username
                 real_uid = bot_actual or bot_uid_str
                 merged["uid"] = real_uid
                 merged["display_uid"] = real_uid
@@ -1130,12 +1000,6 @@ def _build_user_accounts(username: str, user: Dict[str, Any]) -> List[Dict[str, 
                 "last_updated": time.strftime("%H:%M:%S"),
                 "added_at": acc.get("added_at", now),
                 "owner": username,
-                "nickname": acc.get("nickname") or f"Player_{user_uid[:6]}",
-                "region": acc.get("region") or "BD",
-                "level": int(acc.get("level") or 1),
-                "initial_exp": int(acc.get("initial_exp", acc.get("exp", 0)) or 0),
-                "current_exp": int(acc.get("current_exp", acc.get("exp", 0)) or 0),
-                "gained_exp": int(acc.get("gained_exp", 0) or 0),
                 **{k: prog[k] for k in ("next_level", "remaining_exp", "target_exp",
                                         "needed_for_level", "earned_in_level", "progress_pct")},
             }
@@ -1165,17 +1029,14 @@ async def api_user_stats(request: web.Request) -> web.Response:
             for check_key in [real_uid, user_input_uid, str(acc.get("uid", ""))]:
                 if check_key and check_key in bot_state.accounts:
                     cand = bot_state.accounts[check_key]
-                    if (cand.get("owner") == username or
-                            str(cand.get("auth_uid", "")) == user_input_uid or
-                            str(cand.get("display_uid", "")) == user_input_uid):
+                    if cand.get("owner") == username:
                         if fresh is None or cand.get("current_exp", 0) > fresh.get("current_exp", 0):
                             fresh = cand
             if fresh:
                 for k in ("current_exp", "gained_exp", "level", "nickname", "region",
                           "status", "matches_played", "active_matches", "last_updated",
                           "likes", "next_level", "remaining_exp", "target_exp",
-                          "needed_for_level", "earned_in_level", "progress_pct",
-                          "is_paused", "paused_at", "total_pause_duration"):
+                          "needed_for_level", "earned_in_level", "progress_pct"):
                     if k in fresh:
                         acc[k] = fresh[k]
 
@@ -1232,102 +1093,6 @@ async def api_user_add_account(request: web.Request) -> web.Response:
         return _json_error(str(e), 500)
 
 
-async def _resolve_user_account_runtime(username: str, requested_id: str):
-    """Resolve a dashboard card ID to the user's stored account and all live aliases.
-
-    The dashboard displays the native/game UID, while users.json can store the
-    login/auth UID (or token prefix).  Control endpoints must accept either.
-    """
-    user = await get_user(username)
-    if not user:
-        return None, set(), None
-
-    requested = str(requested_id or "").strip()
-    selected = None
-    aliases = set()
-
-    # First match the stored account directly.
-    for acc in user.get("accounts", []):
-        stored_uid = str(acc.get("uid") or "").strip()
-        stored_token = str(acc.get("token") or "").strip()
-        token_prefix = stored_token[:20] if stored_token else ""
-        if requested and requested in {stored_uid, token_prefix}:
-            selected = acc
-            break
-
-    # If the card contains the native/game UID, resolve it through live bot state.
-    if selected is None and requested:
-        for bot_uid, live in list(bot_state.accounts.items()):
-            live_ids = {
-                str(bot_uid).strip(),
-                str(live.get("uid") or "").strip(),
-                str(live.get("actual_uid") or "").strip(),
-                str(live.get("display_uid") or "").strip(),
-                str(live.get("auth_uid") or "").strip(),
-            }
-            live_token = str(live.get("token") or "").strip()
-            if live_token:
-                live_ids.add(live_token[:20])
-            if requested not in live_ids:
-                continue
-
-            live_owner = str(live.get("owner") or "").strip()
-            live_auth = str(live.get("auth_uid") or "").strip()
-            live_token_prefix = live_token[:20] if live_token else ""
-            for acc in user.get("accounts", []):
-                stored_uid = str(acc.get("uid") or "").strip()
-                stored_token = str(acc.get("token") or "").strip()
-                stored_prefix = stored_token[:20] if stored_token else ""
-                if (live_owner == str(username) or
-                        (stored_uid and stored_uid == live_auth) or
-                        (stored_prefix and stored_prefix == live_token_prefix)):
-                    selected = acc
-                    if not live.get("owner"):
-                        live["owner"] = username
-                    break
-            if selected is not None:
-                break
-
-    if selected is None:
-        return None, set(), None
-
-    stored_uid = str(selected.get("uid") or "").strip()
-    stored_token = str(selected.get("token") or "").strip()
-    if stored_uid:
-        aliases.add(stored_uid)
-    if stored_token:
-        aliases.add(stored_token[:20])
-        aliases.add(f"tok_{stored_token[:20]}")
-
-    # Collect every live/native alias belonging to this stored account.
-    for bot_uid, live in list(bot_state.accounts.items()):
-        live_ids = {
-            str(bot_uid).strip(),
-            str(live.get("uid") or "").strip(),
-            str(live.get("actual_uid") or "").strip(),
-            str(live.get("display_uid") or "").strip(),
-            str(live.get("auth_uid") or "").strip(),
-        }
-        live_token = str(live.get("token") or "").strip()
-        if live_token:
-            live_ids.add(live_token[:20])
-        if (str(live.get("owner") or "").strip() == str(username) or
-                (stored_uid and str(live.get("auth_uid") or "").strip() == stored_uid) or
-                (stored_token and live_token[:20] == stored_token[:20])):
-            aliases.update(x for x in live_ids if x)
-            if not live.get("owner"):
-                live["owner"] = username
-
-    # Expand through existing runtime maps as a final compatibility layer.
-    expanded = set(aliases)
-    for a in list(aliases):
-        try:
-            expanded.update(bot_state._runtime_candidates(a))
-        except Exception:
-            pass
-    return selected, {x for x in expanded if x}, stored_uid or (stored_token[:20] if stored_token else requested)
-
-
 async def api_user_remove_account(request: web.Request) -> web.Response:
     err = await _require_user(request)
     if err: return err
@@ -1339,121 +1104,54 @@ async def api_user_remove_account(request: web.Request) -> web.Response:
         if not acc_id:
             return _json_error("account_id required")
 
-        selected, aliases, stored_id = await _resolve_user_account_runtime(username, acc_id)
-        if selected is None:
-            return _json_error("Account not found")
-
-        # HARD STOP FIRST: cancel every resolved runtime alias before deleting persistence.
-        runtime_cancelled = 0
-        for alias in sorted(aliases):
-            runtime_cancelled += bot_state.cancel_account_runtime(alias, "delete")
-
-        r = await remove_account_from_user(username, stored_id)
-        if "status" not in r:
-            return _json_error(r.get("error", "Account not found"))
-
-        for alias in list(aliases):
-            bot_state.accounts.pop(alias, None)
-        bot_state.clear_account_runtime_maps(stored_id)
-        for alias in list(aliases):
-            bot_state.clear_account_runtime_maps(alias)
-        bot_state.recalc_totals()
-        bot_state.log(f"[DELETE SUCCESS] {username} | UID {acc_id} | runtime_cancelled={runtime_cancelled}", "success", acc_id)
-
-        cb = bot_state.refresh_callbacks.get("on_account_deleted")
-        if cb:
-            try: asyncio.create_task(cb(list(aliases)))
-            except Exception: pass
-        return web.json_response({"status": "ok", "runtime_cancelled": runtime_cancelled})
-    except Exception as e:
-        bot_state.log(f"[DELETE FAILED] {e}", "error")
-        return _json_error(str(e), 500)
-
-
-async def api_user_pause_account(request: web.Request) -> web.Response:
-    err = await _require_user(request)
-    if err: return err
-    try:
-        sess = await get_session(_get_sid(request))
-        username = sess["username"]
-        data = await request.json()
-        acc_id = str(data.get("account_id", "")).strip()
-        if not acc_id:
-            return _json_error("account_id required")
-
-        selected, aliases, stored_id = await _resolve_user_account_runtime(username, acc_id)
-        if selected is None:
-            return _json_error("Account not found", 404)
-
-        # Toggle using the displayed/native ID, then mirror state to all aliases.
-        paused = bot_state.toggle_pause(acc_id)
-        for alias in aliases:
-            if alias == acc_id:
-                continue
-            try:
-                if bot_state.is_paused(alias) != paused:
-                    bot_state.toggle_pause(alias)
-            except Exception:
-                pass
-        bot_state.log(f"[PAUSE] {username} | UID {acc_id} | paused={paused}", "warning" if paused else "success", acc_id)
-        return web.json_response({"status": "ok", "is_paused": paused})
-    except Exception as e:
-        return _json_error(str(e), 500)
-
-
-async def api_user_pause_all(request: web.Request) -> web.Response:
-    err = await _require_user(request)
-    if err: return err
-    try:
-        sess = await get_session(_get_sid(request))
-        username = sess["username"]
         user = await get_user(username)
         if not user:
-            return _json_error("User not found", 404)
-        ids = []
+            return _json_error("User not found")
+
+        keys = {acc_id}
         for acc in user.get("accounts", []):
-            selected, aliases, stored_id = await _resolve_user_account_runtime(
-                username, str(acc.get("uid") or acc.get("token", "")[:20]))
-            if selected is not None:
-                ids.append((stored_id, aliases))
-        any_active = any(not bot_state.is_paused(a) for _, aliases in ids for a in aliases)
-        desired = any_active
-        for stored_id, aliases in ids:
-            for alias in aliases or {stored_id}:
-                if bot_state.is_paused(alias) != desired:
-                    bot_state.toggle_pause(alias)
-        bot_state.log(f"[PAUSE ALL] {username} | paused={desired}", "warning" if desired else "success")
-        return web.json_response({"status": "ok", "all_paused": desired})
-    except Exception as e:
-        return _json_error(str(e), 500)
+            uid_val = str(acc.get("uid") or "")
+            token_val = str(acc.get("token") or "")
+            keys.add(uid_val)
+            if token_val:
+                keys.add(token_val[:20])
+                keys.add(f"tok_{token_val[:20]}")
 
+        for bot_uid, ba in bot_state.accounts.items():
+            if ba.get("owner") != username:
+                continue
+            for check_id in [str(bot_uid), str(ba.get("actual_uid", "")),
+                             str(ba.get("display_uid", "")), str(ba.get("uid", ""))]:
+                if check_id and check_id == acc_id:
+                    keys.update([str(bot_uid), str(ba.get("actual_uid", "")),
+                                 str(ba.get("display_uid", "")), str(ba.get("uid", ""))])
 
-async def api_user_restart_account(request: web.Request) -> web.Response:
-    err = await _require_user(request)
-    if err: return err
-    try:
-        sess = await get_session(_get_sid(request))
-        username = sess["username"]
-        data = await request.json()
-        acc_id = str(data.get("account_id", "")).strip()
-        if not acc_id:
-            return _json_error("account_id required")
+        removed = False
+        for k in list(keys):
+            if not k:
+                continue
+            r = await remove_account_from_user(username, k)
+            if "status" in r:
+                removed = True
+                break
+        if not removed:
+            return _json_error("Account not found")
 
-        selected, aliases, stored_id = await _resolve_user_account_runtime(username, acc_id)
-        if selected is None:
-            return _json_error("Account not found", 404)
+        for k in keys:
+            if not k:
+                continue
+            worker_key = f"{username}::{k}"
+            if worker_key in bot_state.account_workers:
+                try: bot_state.account_workers[worker_key].cancel()
+                except Exception: pass
+                bot_state.account_workers.pop(worker_key, None)
+            bot_state.accounts.pop(k, None)
+            bot_state.account_credentials.pop(k, None)
+            bot_state.account_credentials.pop(f"tok_{k}", None)
 
-        for alias in sorted(aliases):
-            bot_state.cancel_account_runtime(alias, "restart")
-            bot_state.paused_accounts.discard(alias)
-        cb = bot_state.refresh_callbacks.get("on_restart_account")
-        if cb:
-            # Restart callback needs the persisted login/auth UID when the card shows game UID.
-            await cb(stored_id)
-        bot_state.log(f"[RESTART] {username} | UID {acc_id} | stored_id={stored_id}", "success", acc_id)
+        bot_state.recalc_totals()
         return web.json_response({"status": "ok"})
     except Exception as e:
-        bot_state.log(f"[RESTART FAILED] {e}", "error")
         return _json_error(str(e), 500)
 
 
@@ -1468,33 +1166,27 @@ async def api_user_refresh(request: web.Request) -> web.Response:
         if not acc_id:
             return _json_error("account_id required")
 
-        user = await get_user(username)
-        if not user:
-            return _json_error("User not found", 404)
-
-        runtime_ids = bot_state._runtime_candidates(acc_id) or {acc_id}
         candidates = {acc_id}
-        matched = False
-        for acc in user.get("accounts", []):
-            uid_val = str(acc.get("uid") or "")
-            token_val = str(acc.get("token") or "")
-            stored_ids = {x for x in (uid_val, token_val[:20]) if x}
-            if stored_ids & runtime_ids or acc_id in stored_ids:
-                matched = True
-                if uid_val: candidates.add(uid_val)
+        user = await get_user(username)
+        if user:
+            for acc in user.get("accounts", []):
+                uid_val = str(acc.get("uid") or "")
+                token_val = str(acc.get("token") or "")
+                if uid_val:
+                    candidates.add(uid_val)
                 if token_val:
                     candidates.add(token_val[:20])
                     candidates.add(f"tok_{token_val[:20]}")
-                break
-        if not matched:
-            return _json_error("Account not found", 404)
 
         for bot_uid, ba in bot_state.accounts.items():
-            live_ids = {str(bot_uid), str(ba.get("actual_uid", "")),
-                        str(ba.get("display_uid", "")), str(ba.get("auth_uid", "")),
-                        str(ba.get("uid", "")), str(ba.get("token", ""))[:16]}
-            if live_ids & runtime_ids:
-                candidates.update(x for x in live_ids if x)
+            if ba.get("owner") != username:
+                continue
+            if (str(bot_uid) == acc_id or
+                    str(ba.get("actual_uid", "")) == acc_id or
+                    str(ba.get("display_uid", "")) == acc_id or
+                    str(ba.get("uid", "")) == acc_id):
+                candidates.update([str(bot_uid), str(ba.get("actual_uid", "")),
+                                   str(ba.get("display_uid", "")), str(ba.get("uid", ""))])
 
         cb = bot_state.refresh_callbacks.get("on_refresh_account")
         if cb:
@@ -1504,12 +1196,42 @@ async def api_user_refresh(request: web.Request) -> web.Response:
                     except Exception: pass
 
         await asyncio.sleep(1.0)
-        # Return the fresh dashboard representation instead of an empty response.
-        result_accounts = _build_user_accounts(username, user)
-        result = next((a for a in result_accounts
-                       if str(a.get("actual_uid") or a.get("uid")) in runtime_ids
-                       or str(a.get("user_input_uid")) in runtime_ids), None)
-        return web.json_response({"status": "ok", "account": result})
+        return web.json_response({"status": "ok"})
+    except Exception as e:
+        return _json_error(str(e), 500)
+
+
+async def api_user_restart_account(request: web.Request) -> web.Response:
+    err = await _require_user(request)
+    if err: return err
+    try:
+        sess = await get_session(_get_sid(request))
+        username = sess["username"]
+        data = await request.json()
+        acc_id = str(data.get("account_id", "")).strip()
+        if not acc_id:
+            return _json_error("account_id required")
+        user = await get_user(username)
+        if not user:
+            return _json_error("User not found", 404)
+        allowed = False
+        for acc in user.get("accounts", []):
+            uid_val = str(acc.get("uid") or "")
+            tok_val = str(acc.get("token") or "")
+            if acc_id in {uid_val, tok_val[:20], f"tok_{tok_val[:20]}"}:
+                allowed = True
+                break
+        if not allowed:
+            for ba in bot_state.accounts.values():
+                if ba.get("owner") == username and acc_id in {str(ba.get("uid","")), str(ba.get("actual_uid","")), str(ba.get("display_uid",""))}:
+                    allowed = True
+                    break
+        if not allowed:
+            return _json_error("Account not found", 404)
+        cb = bot_state.refresh_callbacks.get("on_restart_account")
+        if cb:
+            asyncio.create_task(cb(acc_id))
+        return web.json_response({"status":"ok"})
     except Exception as e:
         return _json_error(str(e), 500)
 
@@ -1573,10 +1295,8 @@ async def start_web_dashboard(host: str = "0.0.0.0", port: int = 20331):
     app.router.add_get("/api/user/stats", api_user_stats)
     app.router.add_post("/api/user/add-account", api_user_add_account)
     app.router.add_post("/api/user/remove-account", api_user_remove_account)
-    app.router.add_post("/api/user/pause-account", api_user_pause_account)
-    app.router.add_post("/api/user/pause-all", api_user_pause_all)
-    app.router.add_post("/api/user/restart-account", api_user_restart_account)
     app.router.add_post("/api/user/refresh", api_user_refresh)
+    app.router.add_post("/api/user/restart", api_user_restart_account)
 
     # public
     app.router.add_get("/api/public/popup", api_public_popup)
@@ -1587,8 +1307,8 @@ async def start_web_dashboard(host: str = "0.0.0.0", port: int = 20331):
     app.router.add_post("/api/account/add", api_user_add_account)
     app.router.add_post("/api/account/delete", api_user_remove_account)
     app.router.add_post("/api/account/refresh", api_user_refresh)
-    app.router.add_post("/api/account/pause", api_user_pause_account)
     app.router.add_post("/api/account/restart", api_user_restart_account)
+    app.router.add_post("/api/account/pause", _alias_pause)
     app.router.add_post("/api/account/pause_all", _alias_pause_all)
     app.router.add_post("/api/logs/clear", _alias_clear_logs)
 
