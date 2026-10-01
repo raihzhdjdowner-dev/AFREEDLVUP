@@ -2370,21 +2370,36 @@ async def main():
         print_error(f"Could not start web dashboard: {e}")
 
     async def on_account_added_handler(data):
+        # Legacy callback; keep it for existing integrations.
         sync_devices_with_accounts()
         if "token" in data and data["token"]:
             t = str(data["token"]).strip()
-            task = asyncio.create_task(account_loop_token(t))
+            task = asyncio.create_task(account_loop_token(t, owner=data.get("owner")))
             bot_state.account_workers[t[:16]] = task
         elif "uid" in data and "password" in data:
             u = str(data["uid"]).strip()
             p = str(data["password"]).strip()
-            task = asyncio.create_task(account_loop_guest(u, p))
+            task = asyncio.create_task(account_loop_guest(u, p, owner=data.get("owner")))
             bot_state.account_workers[u] = task
+
+    async def on_user_account_added_handler(username, data):
+        # User-scoped callback: always preserve the dashboard owner mapping.
+        sync_devices_with_accounts()
+        owner = str(username)
+        if data.get("token"):
+            t = str(data["token"]).strip()
+            task = asyncio.create_task(account_loop_token(t, owner=owner))
+            bot_state.account_workers[f"{owner}::{t[:16]}"] = task
+        elif data.get("uid") and data.get("password"):
+            u = str(data["uid"]).strip()
+            p = str(data["password"]).strip()
+            task = asyncio.create_task(account_loop_guest(u, p, owner=owner))
+            bot_state.account_workers[f"{owner}::{u}"] = task
 
     async def on_refresh_account_handler(uid):
         await refresh_account_profile(uid)
 
-    async def on_restart_account_handler(uid):
+    async def on_restart_account_handler(uid, owner=None):
         uid_str = str(uid)
         resolved_uids = {uid_str}
         if uid_str in bot_state.game_to_auth_id:
@@ -2400,19 +2415,27 @@ async def main():
                     pass
                 bot_state.account_workers.pop(u, None)
 
-        accounts = load_accounts()
-        for acc in accounts:
-            acc_u = str(acc.get("uid", ""))
-            if acc_u in resolved_uids and acc.get("password"):
-                t = asyncio.create_task(account_loop_guest(acc_u, acc["password"]))
-                bot_state.account_workers[acc_u] = t
+        # First use the dashboard user's persisted credentials when available.
+        candidate_accounts = load_accounts()
+        if owner:
+            try:
+                uobj = await get_user(str(owner))
+                if uobj and isinstance(uobj.get("accounts"), list):
+                    candidate_accounts = uobj.get("accounts", []) + candidate_accounts
+            except Exception:
+                pass
+        for acc in candidate_accounts:
+            acc_u = str(acc.get("uid", "")).strip()
+            tok = str(acc.get("token", "")).strip()
+            matches = acc_u in resolved_uids or tok[:20] in resolved_uids or f"tok_{tok[:20]}" in resolved_uids
+            if acc_u and matches and acc.get("password"):
+                t = asyncio.create_task(account_loop_guest(acc_u, acc["password"], owner=owner))
+                bot_state.account_workers[f"{owner}::{acc_u}" if owner else acc_u] = t
                 break
-            elif acc.get("token"):
-                tok = acc["token"]
-                if any(u in bot_state.account_token_map and bot_state.account_token_map[u] == tok for u in resolved_uids):
-                    t = asyncio.create_task(account_loop_token(tok))
-                    bot_state.account_workers[tok[:16]] = t
-                    break
+            elif tok and matches:
+                t = asyncio.create_task(account_loop_token(tok, owner=owner))
+                bot_state.account_workers[f"{owner}::{tok[:16]}" if owner else tok[:16]] = t
+                break
 
     async def on_account_deleted_handler(deleted_ids):
         for d_id in deleted_ids:
@@ -2424,6 +2447,7 @@ async def main():
             bot_state.close_writers_for_account(str(uid))
 
     bot_state.refresh_callbacks["on_account_added"] = on_account_added_handler
+    bot_state.refresh_callbacks["on_user_account_added"] = on_user_account_added_handler
     bot_state.refresh_callbacks["on_account_deleted"] = on_account_deleted_handler
     bot_state.refresh_callbacks["on_refresh_account"] = on_refresh_account_handler
     bot_state.refresh_callbacks["on_restart_account"] = on_restart_account_handler

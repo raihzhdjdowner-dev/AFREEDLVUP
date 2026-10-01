@@ -1228,10 +1228,27 @@ async def api_user_restart_account(request: web.Request) -> web.Response:
                     break
         if not allowed:
             return _json_error("Account not found", 404)
+        # Resolve the dashboard identifier to the canonical saved account identifier.
+        resolved_id = acc_id
+        for acc in user.get("accounts", []):
+            saved_uid = str(acc.get("uid") or "").strip()
+            saved_token = str(acc.get("token") or "").strip()
+            if acc_id in {saved_uid, saved_token[:20], f"tok_{saved_token[:20]}"} and saved_uid:
+                resolved_id = saved_uid
+                break
+        for bot_uid, ba in bot_state.accounts.items():
+            if ba.get("owner") not in (None, "", username):
+                continue
+            ids = {str(bot_uid), str(ba.get("actual_uid", "")), str(ba.get("display_uid", "")),
+                   str(ba.get("uid", "")), str(ba.get("user_input_uid", ""))}
+            if acc_id in ids:
+                resolved_id = str(ba.get("user_input_uid") or ba.get("actual_uid") or bot_uid)
+                break
+
         cb = bot_state.refresh_callbacks.get("on_restart_account")
         if cb:
-            asyncio.create_task(cb(acc_id))
-        return web.json_response({"status":"ok"})
+            asyncio.create_task(cb(resolved_id, username))
+        return web.json_response({"status":"ok", "resolved_id": resolved_id})
     except Exception as e:
         return _json_error(str(e), 500)
 
