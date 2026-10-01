@@ -54,6 +54,8 @@ button{width:100%;padding:13px;border:0;border-radius:11px;background:linear-gra
 </section>
 <section class="formbox">
 <form id="paymentForm">
+<label class="label">Panel Username</label>
+<input name="username" required maxlength="100" placeholder="Your website username">
 <label class="label">Customer Name</label>
 <input name="customer_name" required maxlength="100" placeholder="Your name">
 <label class="label">Contact (Telegram / WhatsApp)</label>
@@ -91,7 +93,7 @@ document.getElementById('paymentForm').addEventListener('submit',async e=>{
  e.preventDefault(); const msg=document.getElementById('msg'); msg.style.display='none';
  const fd=new FormData(e.target); fd.set('plan',document.getElementById('plan').value);
  try{const r=await fetch('/api/payment/submit',{method:'POST',body:fd});const d=await r.json();
-   msg.className=d.status==='ok'?'ok':'err';msg.textContent=d.status==='ok'?'Submitted successfully. Request ID: '+d.request_id:d.error||'Submission failed';msg.style.display='block';
+   msg.className=d.status==='ok'?'ok':'err';msg.textContent=d.status==='ok'?'Submitted successfully. Request ID: '+d.request_id+' — wait for admin verification.':d.error||'Submission failed';msg.style.display='block';
    if(d.status==='ok') e.target.reset();
  }catch(err){msg.className='err';msg.textContent='Network error';msg.style.display='block'}
 });

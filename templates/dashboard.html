@@ -593,6 +593,7 @@
     </style>
 </head>
 <body>
+<div id="payment-notification" style="display:none;position:fixed;top:18px;right:18px;z-index:99999;max-width:360px;padding:14px 16px;border-radius:14px;background:#10131d;border:1px solid rgba(99,102,241,.45);box-shadow:0 18px 50px rgba(0,0,0,.5);color:#fff;font-size:13px;line-height:1.45;"></div>
     <div class="container">
         <header>
             <div class="brand">
@@ -1129,6 +1130,35 @@
             `;
         }
 
+        let lastPaymentNotification = localStorage.getItem('last_payment_notification') || '';
+
+        function showPaymentNotification(message, type) {
+            const box = document.getElementById('payment-notification');
+            if (!box || !message) return;
+            box.style.borderColor = type === 'error' ? 'rgba(239,68,68,.55)' : 'rgba(16,185,129,.55)';
+            box.innerHTML = `<strong>${type === 'error' ? 'Payment Update' : 'Payment Accepted'}</strong><br>${escapeHtml(message)}`;
+            box.style.display = 'block';
+            clearTimeout(window.__paymentNoticeTimer);
+            window.__paymentNoticeTimer = setTimeout(() => { box.style.display = 'none'; }, 9000);
+        }
+
+        async function loadPaymentRequests() {
+            try {
+                const r = await fetch('/api/user/payment-requests', { credentials: 'same-origin', cache: 'no-store' });
+                if (!r.ok) return;
+                const d = await r.json();
+                if (!d || d.status !== 'ok' || !Array.isArray(d.requests)) return;
+                const latest = d.requests.find(x => x.status === 'verified' || x.status === 'rejected');
+                if (!latest) return;
+                const marker = `${latest.id}:${latest.status}:${latest.notification_at || latest.verified_at || ''}`;
+                if (marker !== lastPaymentNotification) {
+                    lastPaymentNotification = marker;
+                    localStorage.setItem('last_payment_notification', marker);
+                    showPaymentNotification(latest.notification || (latest.status === 'verified' ? 'Payment accepted.' : 'Payment rejected.'), latest.notification_type || (latest.status === 'rejected' ? 'error' : 'success'));
+                }
+            } catch (e) {}
+        }
+
         async function loadStats() {
             try {
                 const res = await fetch('/api/user/stats', { credentials: 'same-origin' });
@@ -1283,6 +1313,8 @@
 
         // ============ INIT ============
         loadStats();
+        loadPaymentRequests();
+        setInterval(loadPaymentRequests, 2500);
         setInterval(loadStats, 4000);                          // Light stats poll every 4s (silent)
         setInterval(autoRefreshAll, AUTO_REFRESH_INTERVAL_MS); // Auto refresh ALL every 5 min
         countdownTimer = setInterval(tickCountdown, 1000);
