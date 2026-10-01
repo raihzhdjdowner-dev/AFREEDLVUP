@@ -1,0 +1,1070 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Panel — BASHANT Level Up</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        :root {
+            --bg-base: #060913;
+            --bg-card: rgba(13, 19, 36, 0.85);
+            --bg-card-hover: rgba(19, 27, 50, 0.95);
+            --border-card: rgba(127, 0, 255, 0.18);
+            --border-hover: rgba(127, 0, 255, 0.5);
+            --accent-cyan: #00f2fe;
+            --accent-blue: #4facfe;
+            --accent-purple: #7f00ff;
+            --accent-pink: #ff3366;
+            --accent-green: #00ff88;
+            --accent-amber: #ffaa00;
+            --text-main: #f0f4fc;
+            --text-muted: #8e9bb5;
+            --glass-glow: 0 8px 32px 0 rgba(127, 0, 255, 0.12);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Outfit', sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-base);
+            background-image:
+                radial-gradient(circle at 15% 15%, rgba(127, 0, 255, 0.18) 0%, transparent 45%),
+                radial-gradient(circle at 85% 85%, rgba(255, 51, 102, 0.10) 0%, transparent 45%),
+                linear-gradient(180deg, #060913 0%, #0a0e1c 100%);
+            color: var(--text-main);
+            min-height: 100vh;
+            padding: 24px;
+        }
+
+        .container { max-width: 1440px; margin: 0 auto; }
+
+        header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 20px 28px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-card);
+            border-radius: 20px;
+            backdrop-filter: blur(16px);
+            box-shadow: var(--glass-glow);
+            margin-bottom: 24px;
+        }
+
+        .brand { display: flex; align-items: center; gap: 16px; }
+
+        .logo-box {
+            width: 48px; height: 48px;
+            background: linear-gradient(135deg, var(--accent-purple), var(--accent-pink));
+            border-radius: 14px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 22px; color: #fff;
+            box-shadow: 0 0 20px rgba(127, 0, 255, 0.5);
+        }
+
+        .brand-text h1 {
+            font-size: 22px; font-weight: 800;
+            letter-spacing: -0.5px;
+            background: linear-gradient(90deg, #ffffff, #c084fc);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .brand-text p {
+            font-size: 13px;
+            color: var(--text-muted);
+            margin-top: 2px;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 18px;
+            border-radius: 12px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.25s ease;
+            border: none;
+            outline: none;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent-purple), var(--accent-pink));
+            color: #fff;
+            box-shadow: 0 4px 16px rgba(127, 0, 255, 0.3);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(127, 0, 255, 0.5);
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: var(--text-main);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.1);
+            border-color: var(--border-hover);
+        }
+
+        .btn-danger {
+            background: rgba(255, 51, 102, 0.15);
+            border: 1px solid rgba(255, 51, 102, 0.35);
+            color: #ff8099;
+        }
+
+        .btn-danger:hover { background: rgba(255, 51, 102, 0.25); }
+
+        .btn-success {
+            background: rgba(0, 255, 136, 0.15);
+            border: 1px solid rgba(0, 255, 136, 0.35);
+            color: #66ffb8;
+        }
+
+        .btn-success:hover { background: rgba(0, 255, 136, 0.25); }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 18px;
+            margin-bottom: 24px;
+        }
+
+        .stat-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-card);
+            border-radius: 18px;
+            padding: 20px;
+            backdrop-filter: blur(14px);
+            display: flex;
+            align-items: center;
+            gap: 18px;
+            transition: all 0.3s ease;
+        }
+
+        .stat-card:hover {
+            border-color: var(--border-hover);
+            transform: translateY(-3px);
+            box-shadow: var(--glass-glow);
+        }
+
+        .stat-icon {
+            width: 52px; height: 52px;
+            border-radius: 14px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 22px;
+        }
+
+        .stat-icon.purple { background: rgba(127, 0, 255, 0.15); color: #c084fc; }
+        .stat-icon.cyan { background: rgba(0, 242, 254, 0.15); color: var(--accent-cyan); }
+        .stat-icon.green { background: rgba(0, 255, 136, 0.15); color: var(--accent-green); }
+        .stat-icon.pink { background: rgba(255, 51, 102, 0.15); color: var(--accent-pink); }
+
+        .stat-content h3 {
+            font-size: 26px; font-weight: 800;
+            letter-spacing: -0.5px; color: #fff;
+        }
+
+        .stat-content p {
+            font-size: 13px; color: var(--text-muted); font-weight: 500;
+        }
+
+        .admin-main {
+            display: grid;
+            grid-template-columns: 400px 1fr;
+            gap: 24px;
+        }
+
+        @media (max-width: 1024px) {
+            .admin-main { grid-template-columns: 1fr; }
+        }
+
+        .card-box {
+            background: var(--bg-card);
+            border: 1px solid var(--border-card);
+            border-radius: 20px;
+            padding: 24px;
+            backdrop-filter: blur(16px);
+        }
+
+        .box-title {
+            font-size: 18px; font-weight: 700;
+            display: flex; align-items: center; gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .box-title i { color: #c084fc; }
+
+        .form-group { margin-bottom: 16px; }
+
+        .form-group label {
+            display: block; font-size: 13px; font-weight: 600;
+            color: var(--text-muted); margin-bottom: 6px;
+        }
+
+        .form-input, .form-select, .form-textarea {
+            width: 100%;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            padding: 11px 14px;
+            color: #fff;
+            font-size: 14px;
+            outline: none;
+            transition: all 0.2s;
+            font-family: 'Outfit', sans-serif;
+        }
+
+        .form-textarea {
+            resize: vertical;
+            min-height: 80px;
+            line-height: 1.5;
+        }
+
+        .form-input:focus, .form-select:focus, .form-textarea:focus {
+            border-color: #c084fc;
+            box-shadow: 0 0 0 3px rgba(127, 0, 255, 0.15);
+        }
+
+        .form-select option {
+            background: #0c1224;
+            color: #fff;
+        }
+
+        .row-2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+
+        .users-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 18px;
+        }
+
+        .search-input {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            padding: 8px 14px 8px 38px;
+            color: #fff;
+            font-size: 13px;
+            outline: none;
+            width: 240px;
+        }
+
+        .search-input:focus { border-color: #c084fc; }
+
+        .search-wrap { position: relative; }
+
+        .search-wrap i {
+            position: absolute;
+            left: 13px; top: 50%;
+            transform: translateY(-50%);
+            color: var(--text-muted);
+            font-size: 13px;
+        }
+
+        .users-list {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            max-height: 720px;
+            overflow-y: auto;
+            padding-right: 6px;
+        }
+
+        .users-list::-webkit-scrollbar { width: 6px; }
+        .users-list::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 3px;
+        }
+
+        .user-card {
+            background: rgba(10, 15, 30, 0.7);
+            border: 1px solid rgba(255, 255, 255, 0.07);
+            border-radius: 14px;
+            padding: 18px;
+            transition: all 0.25s;
+        }
+
+        .user-card:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-hover);
+        }
+
+        .user-top {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            margin-bottom: 14px;
+        }
+
+        .user-profile { display: flex; align-items: center; gap: 12px; }
+
+        .user-avatar {
+            width: 42px; height: 42px;
+            border-radius: 12px;
+            background: linear-gradient(135deg, var(--accent-purple), var(--accent-pink));
+            display: flex; align-items: center; justify-content: center;
+            font-weight: 700; font-size: 16px; color: #fff;
+        }
+
+        .user-info h4 {
+            font-size: 15px; font-weight: 700;
+            color: #fff;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .user-info span {
+            font-size: 12px; color: var(--text-muted);
+        }
+
+        .user-status {
+            display: inline-flex; align-items: center; gap: 6px;
+            font-size: 11px; font-weight: 700;
+            padding: 4px 10px; border-radius: 20px;
+            text-transform: uppercase;
+        }
+
+        .status-active {
+            background: rgba(0, 255, 136, 0.12);
+            color: var(--accent-green);
+            border: 1px solid rgba(0, 255, 136, 0.3);
+        }
+
+        .status-expired {
+            background: rgba(255, 51, 102, 0.12);
+            color: var(--accent-pink);
+            border: 1px solid rgba(255, 51, 102, 0.3);
+        }
+
+        .user-details {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            background: rgba(0, 0, 0, 0.25);
+            padding: 12px 14px;
+            border-radius: 10px;
+            margin-bottom: 12px;
+        }
+
+        .detail-item { display: flex; flex-direction: column; gap: 3px; }
+
+        .detail-label {
+            font-size: 10px; color: var(--text-muted);
+            text-transform: uppercase; font-weight: 600;
+        }
+
+        .detail-val {
+            font-size: 13px; font-weight: 700;
+            font-family: 'JetBrains Mono', monospace;
+            color: #fff;
+        }
+
+        .user-actions {
+            display: flex;
+            gap: 8px;
+            padding-top: 12px;
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .user-actions .btn { padding: 7px 12px; font-size: 12px; }
+
+        .alert {
+            padding: 11px 14px;
+            border-radius: 10px;
+            font-size: 13px;
+            font-weight: 500;
+            margin-bottom: 16px;
+            display: none;
+        }
+
+        .alert.show { display: block; }
+
+        .alert-error {
+            background: rgba(255, 51, 102, 0.12);
+            border: 1px solid rgba(255, 51, 102, 0.35);
+            color: #ff8099;
+        }
+
+        .alert-success {
+            background: rgba(0, 255, 136, 0.12);
+            border: 1px solid rgba(0, 255, 136, 0.35);
+            color: #66ffb8;
+        }
+
+        .modal-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(3, 6, 15, 0.85);
+            backdrop-filter: blur(8px);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+            padding: 20px;
+        }
+
+        .modal-overlay.active { display: flex; }
+
+        .modal-card {
+            background: #0c1224;
+            border: 1px solid var(--border-card);
+            border-radius: 20px;
+            width: 100%;
+            max-width: 480px;
+            padding: 28px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+        }
+
+        .modal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 20px;
+        }
+
+        .modal-header h3 { font-size: 18px; font-weight: 700; }
+
+        .icon-btn {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: var(--text-muted);
+            width: 34px; height: 34px;
+            border-radius: 10px;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .icon-btn:hover {
+            background: rgba(255, 51, 102, 0.15);
+            color: var(--accent-pink);
+            border-color: var(--accent-pink);
+        }
+
+        .modal-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            margin-top: 22px;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 50px 20px;
+            color: var(--text-muted);
+        }
+
+        .empty-state i {
+            font-size: 42px;
+            margin-bottom: 12px;
+            color: rgba(255, 255, 255, 0.08);
+        }
+
+        .countdown {
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--accent-cyan);
+        }
+
+        .countdown.warning { color: var(--accent-amber); }
+
+        .countdown.danger {
+            color: var(--accent-pink);
+            animation: pulse-txt 1s infinite alternate;
+        }
+
+        @keyframes pulse-txt {
+            0% { opacity: 1; }
+            100% { opacity: 0.5; }
+        }
+
+        .section-divider {
+            height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(127, 0, 255, 0.3), transparent);
+            margin: 28px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="brand">
+                <div class="logo-box"><i class="fa-solid fa-crown"></i></div>
+                <div class="brand-text">
+                    <h1>ADMIN PANEL</h1>
+                    <p>Manage users • Set limits • Track usage • Landing popup</p>
+                </div>
+            </div>
+            <div style="display:flex; gap:10px;">
+                <button class="btn btn-secondary" onclick="loadUsers(); loadPopup();">
+                    <i class="fa-solid fa-rotate"></i> Refresh
+                </button>
+                <button class="btn btn-danger" onclick="logout()">
+                    <i class="fa-solid fa-right-from-bracket"></i> Logout
+                </button>
+            </div>
+        </header>
+
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-icon purple"><i class="fa-solid fa-users"></i></div>
+                <div class="stat-content">
+                    <h3 id="stat-total-users">0</h3>
+                    <p>Total Users</p>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon green"><i class="fa-solid fa-user-check"></i></div>
+                <div class="stat-content">
+                    <h3 id="stat-active-users">0</h3>
+                    <p>Active Users</p>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon cyan"><i class="fa-solid fa-user-clock"></i></div>
+                <div class="stat-content">
+                    <h3 id="stat-expired-users">0</h3>
+                    <p>Expired Users</p>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon pink"><i class="fa-solid fa-layer-group"></i></div>
+                <div class="stat-content">
+                    <h3 id="stat-total-accounts">0</h3>
+                    <p>Total Accounts Added</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="admin-main">
+            <div class="card-box">
+                <div class="box-title">
+                    <i class="fa-solid fa-user-plus"></i>
+                    <span>Create New User</span>
+                </div>
+
+                <div class="alert alert-error" id="form-alert"></div>
+
+                <form id="create-user-form" onsubmit="submitCreateUser(event)">
+                    <div class="form-group">
+                        <label>Username</label>
+                        <input type="text" class="form-input" id="new-username"
+                               placeholder="e.g. user001" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Password</label>
+                        <input type="text" class="form-input" id="new-password"
+                               placeholder="Set a password" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Account Limit (max simultaneous accounts)</label>
+                        <input type="number" class="form-input" id="new-limit"
+                               value="2" min="1" max="100" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Duration</label>
+                        <div class="row-2">
+                            <input type="number" class="form-input" id="new-duration-value"
+                                   value="1" min="1" required>
+                            <select class="form-select" id="new-duration-unit">
+                                <option value="minutes">Minutes</option>
+                                <option value="hours" selected>Hours</option>
+                                <option value="days">Days</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary" style="width:100%; margin-top:6px;">
+                        <i class="fa-solid fa-plus"></i>
+                        <span>Create User</span>
+                    </button>
+                </form>
+            </div>
+
+            <div class="card-box">
+                <div class="users-header">
+                    <div class="box-title" style="margin-bottom:0;">
+                        <i class="fa-solid fa-list"></i>
+                        <span>All Users</span>
+                    </div>
+                    <div class="search-wrap">
+                        <i class="fa-solid fa-magnifying-glass"></i>
+                        <input type="text" class="search-input" id="search-users"
+                               placeholder="Search username..." oninput="filterUsers()">
+                    </div>
+                </div>
+
+                <div class="users-list" id="users-list">
+                    <div class="empty-state">
+                        <i class="fa-solid fa-circle-notch fa-spin"></i>
+                        <p>Loading users...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== POPUP SETTINGS ==================== -->
+        <div class="card-box" style="margin-top:24px;">
+            <div class="box-title">
+                <i class="fa-solid fa-bullhorn"></i>
+                <span>Landing Page Popup Notification</span>
+            </div>
+
+            <div class="alert alert-success" id="popup-alert-success"></div>
+            <div class="alert alert-error" id="popup-alert-error"></div>
+
+            <form id="popup-form" onsubmit="savePopup(event)">
+                <div class="row-2">
+                    <div class="form-group">
+                        <label>Popup Status</label>
+                        <select class="form-select" id="popup-enabled">
+                            <option value="true">ON — Show popup on landing page</option>
+                            <option value="false">OFF — Hide popup</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Top Header (small label)</label>
+                        <input type="text" class="form-input" id="popup-header" placeholder="Important Update">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>Title (big bold text)</label>
+                    <input type="text" class="form-input" id="popup-title" placeholder="IND Server Maintenance">
+                </div>
+
+                <div class="form-group">
+                    <label>Message</label>
+                    <textarea class="form-textarea" id="popup-message" rows="4"
+                              placeholder="Write your announcement message here..."></textarea>
+                </div>
+
+                <div class="row-2">
+                    <div class="form-group">
+                        <label>Button Text</label>
+                        <input type="text" class="form-input" id="popup-button-text" placeholder="Chat Now">
+                    </div>
+                    <div class="form-group">
+                        <label>Button Link (URL)</label>
+                        <input type="text" class="form-input" id="popup-button-link"
+                               placeholder="https://t.me/yourusername">
+                    </div>
+                </div>
+
+                <div class="row-2">
+                    <div class="form-group">
+                        <label>Icon Class (FontAwesome)</label>
+                        <input type="text" class="form-input" id="popup-icon-class"
+                               placeholder="fa-solid fa-circle-check">
+                    </div>
+                    <div class="form-group">
+                        <label>Icon Color (hex)</label>
+                        <input type="text" class="form-input" id="popup-icon-color"
+                               placeholder="#22c55e">
+                    </div>
+                </div>
+
+                <button type="submit" class="btn btn-primary" style="width:100%; margin-top:10px;">
+                    <i class="fa-solid fa-floppy-disk"></i>
+                    <span>Save Popup Settings</span>
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Extend Time Modal -->
+    <div class="modal-overlay" id="extend-modal">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3><i class="fa-solid fa-clock-rotate-left" style="color:#c084fc;"></i> Extend User Time</h3>
+                <button class="icon-btn" onclick="closeExtendModal()">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <p style="font-size:13px; color:var(--text-muted); margin-bottom:16px;">
+                User: <span id="extend-username" style="color:#c084fc; font-weight:700;"></span>
+            </p>
+            <div class="row-2">
+                <div class="form-group">
+                    <label>Duration</label>
+                    <input type="number" class="form-input" id="extend-value" value="1" min="1">
+                </div>
+                <div class="form-group">
+                    <label>Unit</label>
+                    <select class="form-select" id="extend-unit">
+                        <option value="minutes">Minutes</option>
+                        <option value="hours" selected>Hours</option>
+                        <option value="days">Days</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="closeExtendModal()">Cancel</button>
+                <button class="btn btn-success" onclick="confirmExtend()">
+                    <i class="fa-solid fa-plus"></i> Extend
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let allUsers = [];
+        let currentExtendUser = null;
+
+        function showAlert(msg, type = 'error') {
+            const box = document.getElementById('form-alert');
+            box.className = 'alert alert-' + type + ' show';
+            box.innerText = msg;
+            if (type === 'success') {
+                setTimeout(() => box.classList.remove('show'), 3000);
+            }
+        }
+
+        function hideAlert() {
+            document.getElementById('form-alert').classList.remove('show');
+        }
+
+        async function submitCreateUser(e) {
+            e.preventDefault();
+            hideAlert();
+
+            const username = document.getElementById('new-username').value.trim();
+            const password = document.getElementById('new-password').value.trim();
+            const limit = parseInt(document.getElementById('new-limit').value);
+            const durationValue = parseInt(document.getElementById('new-duration-value').value);
+            const durationUnit = document.getElementById('new-duration-unit').value;
+
+            if (!username || !password) {
+                showAlert('Username and password required');
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/admin/create-user', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({
+                        username, password,
+                        account_limit: limit,
+                        duration_value: durationValue,
+                        duration_unit: durationUnit
+                    })
+                });
+                const data = await res.json();
+                if (data.status === 'ok') {
+                    showAlert(`User "${username}" created successfully!`, 'success');
+                    document.getElementById('create-user-form').reset();
+                    document.getElementById('new-limit').value = '2';
+                    document.getElementById('new-duration-value').value = '1';
+                    loadUsers();
+                } else {
+                    showAlert(data.error || 'Failed to create user');
+                }
+            } catch (err) {
+                showAlert('Error: ' + err.message);
+            }
+        }
+
+        async function loadUsers() {
+            try {
+                const res = await fetch('/api/admin/users', { credentials: 'same-origin' });
+                if (res.status === 401) {
+                    window.location.href = '/admin-login';
+                    return;
+                }
+                const data = await res.json();
+                if (data.status === 'ok') {
+                    allUsers = data.users || [];
+                    updateStats();
+                    renderUsers();
+                }
+            } catch (err) {
+                console.error(err);
+            }
+        }
+
+        function updateStats() {
+            const total = allUsers.length;
+            const active = allUsers.filter(u => u.is_active).length;
+            const expired = total - active;
+            const totalAccounts = allUsers.reduce((s, u) => s + (u.total_accounts_added || 0), 0);
+
+            document.getElementById('stat-total-users').innerText = total;
+            document.getElementById('stat-active-users').innerText = active;
+            document.getElementById('stat-expired-users').innerText = expired;
+            document.getElementById('stat-total-accounts').innerText = totalAccounts;
+        }
+
+        function renderUsers() {
+            const container = document.getElementById('users-list');
+            const search = document.getElementById('search-users').value.toLowerCase().trim();
+
+            let filtered = allUsers;
+            if (search) {
+                filtered = allUsers.filter(u => u.username.toLowerCase().includes(search));
+            }
+
+            if (filtered.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <i class="fa-solid fa-ghost"></i>
+                        <p>${search ? 'No users match your search' : 'No users yet. Create one!'}</p>
+                    </div>`;
+                return;
+            }
+
+            container.innerHTML = filtered.map(u => {
+                const statusClass = u.is_active ? 'status-active' : 'status-expired';
+                const statusText = u.is_active ? 'Active' : 'Expired';
+                const initial = (u.username[0] || '?').toUpperCase();
+
+                return `
+                    <div class="user-card">
+                        <div class="user-top">
+                            <div class="user-profile">
+                                <div class="user-avatar">${escapeHtml(initial)}</div>
+                                <div class="user-info">
+                                    <h4>${escapeHtml(u.username)}</h4>
+                                    <span>Pass: ${escapeHtml(u.password)}</span>
+                                </div>
+                            </div>
+                            <span class="user-status ${statusClass}">${statusText}</span>
+                        </div>
+
+                        <div class="user-details">
+                            <div class="detail-item">
+                                <span class="detail-label">Limit</span>
+                                <span class="detail-val">${u.account_limit}</span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="detail-label">Added</span>
+                                <span class="detail-val">${u.total_accounts_added || 0}</span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="detail-label">Time Left</span>
+                                <span class="detail-val countdown" data-expiry="${u.expires_at}">--</span>
+                            </div>
+                        </div>
+
+                        <div class="user-actions">
+                            <button class="btn btn-success" onclick="openExtendModal('${escapeHtml(u.username)}')">
+                                <i class="fa-solid fa-clock-rotate-left"></i> Extend
+                            </button>
+                            <button class="btn btn-danger" onclick="deleteUser('${escapeHtml(u.username)}')">
+                                <i class="fa-solid fa-trash"></i> Delete
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            updateCountdowns();
+        }
+
+        function updateCountdowns() {
+            document.querySelectorAll('.countdown').forEach(el => {
+                const exp = parseFloat(el.dataset.expiry || '0');
+                const now = Date.now() / 1000;
+                const diff = exp - now;
+
+                if (diff <= 0) {
+                    el.innerText = 'Expired';
+                    el.classList.add('danger');
+                    return;
+                }
+
+                const days = Math.floor(diff / 86400);
+                const hours = Math.floor((diff % 86400) / 3600);
+                const mins = Math.floor((diff % 3600) / 60);
+                const secs = Math.floor(diff % 60);
+
+                let text = '';
+                if (days > 0) text = `${days}d ${hours}h`;
+                else if (hours > 0) text = `${hours}h ${mins}m`;
+                else if (mins > 0) text = `${mins}m ${secs}s`;
+                else text = `${secs}s`;
+
+                el.innerText = text;
+                el.classList.remove('warning', 'danger');
+                if (diff < 3600) el.classList.add('danger');
+                else if (diff < 86400) el.classList.add('warning');
+            });
+        }
+
+        setInterval(updateCountdowns, 1000);
+
+        function filterUsers() { renderUsers(); }
+
+        async function deleteUser(username) {
+            if (!confirm(`Delete user "${username}"? This will also stop their bot.`)) return;
+            try {
+                const res = await fetch('/api/admin/delete-user', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({ username })
+                });
+                const data = await res.json();
+                if (data.status === 'ok') {
+                    loadUsers();
+                } else {
+                    alert('Error: ' + (data.error || 'Unknown'));
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
+
+        function openExtendModal(username) {
+            currentExtendUser = username;
+            document.getElementById('extend-username').innerText = username;
+            document.getElementById('extend-value').value = '1';
+            document.getElementById('extend-unit').value = 'hours';
+            document.getElementById('extend-modal').classList.add('active');
+        }
+
+        function closeExtendModal() {
+            document.getElementById('extend-modal').classList.remove('active');
+            currentExtendUser = null;
+        }
+
+        async function confirmExtend() {
+            if (!currentExtendUser) return;
+            const value = parseInt(document.getElementById('extend-value').value);
+            const unit = document.getElementById('extend-unit').value;
+
+            if (!value || value < 1) {
+                alert('Enter a valid duration');
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/admin/extend-user', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({
+                        username: currentExtendUser,
+                        duration_value: value,
+                        duration_unit: unit
+                    })
+                });
+                const data = await res.json();
+                if (data.status === 'ok') {
+                    closeExtendModal();
+                    loadUsers();
+                } else {
+                    alert('Error: ' + (data.error || 'Unknown'));
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
+
+        // ============ POPUP SETTINGS ============
+        async function loadPopup() {
+            try {
+                const res = await fetch('/api/admin/get-popup', { credentials: 'same-origin' });
+                if (res.status === 401) return;
+                const data = await res.json();
+                if (data.status === 'ok' && data.popup) {
+                    const p = data.popup;
+                    document.getElementById('popup-enabled').value = p.enabled ? 'true' : 'false';
+                    document.getElementById('popup-header').value = p.header || '';
+                    document.getElementById('popup-title').value = p.title || '';
+                    document.getElementById('popup-message').value = p.message || '';
+                    document.getElementById('popup-button-text').value = p.button_text || '';
+                    document.getElementById('popup-button-link').value = p.button_link || '';
+                    document.getElementById('popup-icon-class').value = p.icon_class || '';
+                    document.getElementById('popup-icon-color').value = p.icon_color || '';
+                }
+            } catch (err) {
+                console.error('Load popup error:', err);
+            }
+        }
+
+        async function savePopup(e) {
+            e.preventDefault();
+            const okBox = document.getElementById('popup-alert-success');
+            const errBox = document.getElementById('popup-alert-error');
+            okBox.classList.remove('show');
+            errBox.classList.remove('show');
+
+            const payload = {
+                enabled: document.getElementById('popup-enabled').value === 'true',
+                header: document.getElementById('popup-header').value,
+                title: document.getElementById('popup-title').value,
+                message: document.getElementById('popup-message').value,
+                button_text: document.getElementById('popup-button-text').value,
+                button_link: document.getElementById('popup-button-link').value,
+                icon_class: document.getElementById('popup-icon-class').value,
+                icon_color: document.getElementById('popup-icon-color').value
+            };
+
+            try {
+                const res = await fetch('/api/admin/save-popup', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'same-origin',
+                    body: JSON.stringify(payload)
+                });
+                const data = await res.json();
+                if (data.status === 'ok') {
+                    okBox.innerText = '✓ Popup settings saved successfully!';
+                    okBox.classList.add('show');
+                    setTimeout(() => okBox.classList.remove('show'), 3000);
+                } else {
+                    errBox.innerText = data.error || 'Save failed';
+                    errBox.classList.add('show');
+                }
+            } catch (err) {
+                errBox.innerText = 'Connection error: ' + err.message;
+                errBox.classList.add('show');
+            }
+        }
+
+        async function logout() {
+            try {
+                await fetch('/api/logout', { method: 'POST', credentials: 'same-origin' });
+            } catch (e) {}
+            window.location.href = '/login';
+        }
+
+        function escapeHtml(text) {
+            if (!text) return '';
+            return String(text)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        loadUsers();
+        loadPopup();
+        setInterval(loadUsers, 10000);
+    </script>
+</body>
+</html>

@@ -1,0 +1,36 @@
+{
+  "kajuff": {
+    "username": "kajuff",
+    "password": "Badal",
+    "account_limit": 2,
+    "duration_seconds": 86400,
+    "duration_value": 1,
+    "duration_unit": "days",
+    "created_at": 1790783649.2747765,
+    "expires_at": 1790870049.2747765,
+    "accounts": [
+      {
+        "uid": "7936114203",
+        "password": "5625B7987D1AAACF19A7AE11682717BA045CC3773D3C899B3B715B75ADF40B4B",
+        "added_at": 1790783971.7294772
+      }
+    ],
+    "total_accounts_added": 2,
+    "last_login": 1790783671.686703,
+    "is_active": true
+  },
+  "Afreed": {
+    "username": "Afreed",
+    "password": "Afreed",
+    "account_limit": 2,
+    "duration_seconds": 3600,
+    "duration_value": 1,
+    "duration_unit": "hours",
+    "created_at": 1790784865.3972359,
+    "expires_at": 1790788465.3972359,
+    "accounts": [],
+    "total_accounts_added": 0,
+    "last_login": 1790784903.9439685,
+    "is_active": true
+  }
+}

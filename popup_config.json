@@ -1,0 +1,11 @@
+{
+  "enabled": true,
+  "header": "Important Update",
+  "title": "Server Maintenance",
+  "message": "The bot is currently being upgraded. Please check back soon.",
+  "button_text": "Contact Support",
+  "button_link": "https://t.me/+HREGNszkfio5MjI1",
+  "icon_class": "fa-solid fa-circle-check",
+  "icon_color": "#22c55e",
+  "updated_at": 1790785421
+}
