@@ -1,7 +1,4 @@
 # -*- coding: utf-8 -*-
-LOGIN_API = os.environ.get(
-    "LOGIN_API", "https://login-api-production-8504.up.railway.app"
-)
 # ==================== STANDARD IMPORTS ====================
 import sys
 import asyncio
@@ -16,6 +13,10 @@ import uuid
 import itertools
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Any
+
+LOGIN_API = os.environ.get(
+    "LOGIN_API", "https://login-api-production-8504.up.railway.app"
+)
 
 if sys.platform == "win32":
     try:
