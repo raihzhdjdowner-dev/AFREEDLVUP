@@ -158,6 +158,20 @@
             cursor: not-allowed;
         }
 
+        .btn-pause {
+            background: rgba(245, 158, 11, 0.10);
+            border: 1px solid rgba(245, 158, 11, 0.30);
+            color: #fbbf24;
+        }
+        .btn-pause:hover { background: rgba(245, 158, 11, 0.18); }
+
+        .btn-restart {
+            background: rgba(59, 130, 246, 0.10);
+            border: 1px solid rgba(59, 130, 246, 0.30);
+            color: #60a5fa;
+        }
+        .btn-restart:hover { background: rgba(59, 130, 246, 0.18); }
+
         .info-bar {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
@@ -542,7 +556,7 @@
         }
 
         .acc-actions {
-            display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+            display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
         }
 
         .acc-actions .btn {
@@ -590,7 +604,50 @@
             .exp-box .exp-label { font-size: 8.5px; }
             .account-card { padding: 16px; border-radius: 18px; }
         }
-    </style>
+    
+/* ===== AFREED UI PACK — visual-only layer ===== */
+:root{
+ --af-pink:#ff2d95; --af-violet:#a855f7; --af-cyan:#00f0ff; --af-lime:#7cff4a;
+ --af-bg:#05050a; --af-panel:rgba(12,10,20,.86); --af-line:rgba(255,45,149,.18);
+}
+html{scroll-behavior:smooth}
+body{background-color:var(--af-bg)!important;background-image:
+ radial-gradient(circle at 8% 0%,rgba(255,45,149,.14),transparent 34%),
+ radial-gradient(circle at 92% 18%,rgba(168,85,247,.12),transparent 32%),
+ radial-gradient(circle at 50% 110%,rgba(0,240,255,.07),transparent 36%)!important;}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:-1;background:linear-gradient(115deg,transparent 0%,rgba(255,45,149,.025) 45%,transparent 60%);animation:afScan 9s linear infinite}
+@keyframes afScan{0%{transform:translateX(-20%)}100%{transform:translateX(20%)}}
+button,.btn,a,.card,.account-card,.info-item,.add-section,.paybox,.formbox,.login-card,.hero-card,.plan-card{transition:transform .22s ease,box-shadow .22s ease,border-color .22s ease,background .22s ease,filter .22s ease}
+button:hover,.btn:hover{transform:translateY(-2px);filter:brightness(1.08)}
+.btn:active,button:active{transform:translateY(0) scale(.98)}
+.account-card:hover,.info-item:hover,.add-section:hover,.paybox:hover,.formbox:hover,.plan-card:hover{border-color:rgba(255,45,149,.38)!important;box-shadow:0 14px 45px rgba(255,45,149,.10),0 0 0 1px rgba(168,85,247,.06) inset}
+.logo-box,.brand .logo-box{background:linear-gradient(135deg,var(--af-pink),var(--af-violet))!important;box-shadow:0 0 22px rgba(255,45,149,.35)!important}
+.btn-primary,.btn-main,.btn-buy,.btn-submit{background:linear-gradient(135deg,var(--af-pink),var(--af-violet))!important;border-color:rgba(255,255,255,.15)!important;box-shadow:0 8px 24px rgba(255,45,149,.20)!important}
+.btn-pause{box-shadow:0 0 18px rgba(245,158,11,.08)}
+.btn-danger{box-shadow:0 0 18px rgba(239,68,68,.06)}
+.acc-status{animation:afStatusIn .45s ease both}
+@keyframes afStatusIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+.status-dot{animation:afPulse 1.8s ease-in-out infinite}
+@keyframes afPulse{0%,100%{opacity:.55;transform:scale(.9)}50%{opacity:1;transform:scale(1.12)}}
+.progress-bar-fill{background:linear-gradient(90deg,var(--af-pink),var(--af-violet),var(--af-cyan))!important;box-shadow:0 0 14px rgba(255,45,149,.28)}
+.level-badge{background:linear-gradient(135deg,rgba(255,45,149,.18),rgba(168,85,247,.18))!important;border-color:rgba(255,45,149,.28)!important}
+.header-right .user-chip,.header-right .countdown-chip{border-color:rgba(255,45,149,.20)!important}
+input:focus,select:focus,textarea:focus{border-color:var(--af-pink)!important;box-shadow:0 0 0 3px rgba(255,45,149,.11),0 0 18px rgba(255,45,149,.08)!important}
+.af-loading{pointer-events:none!important;position:relative!important;color:transparent!important}
+.af-loading::after{content:"";position:absolute;width:14px;height:14px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:afSpin .7s linear infinite;left:50%;top:50%;margin:-7px}
+@keyframes afSpin{to{transform:rotate(360deg)}}
+@media(max-width:560px){
+ body{padding-left:10px!important;padding-right:10px!important}
+ .container,.wrap{width:100%!important}
+ .acc-actions{display:grid!important;grid-template-columns:1fr 1fr!important;gap:8px!important}
+ .acc-actions .btn{width:100%!important;min-height:42px}
+ .info-bar{grid-template-columns:1fr 1fr!important}
+ .info-bar .info-item:nth-child(3){grid-column:1/-1!important}
+ .brand-text h1{font-size:14px!important}
+ .header-right .user-chip{max-width:105px}
+}
+
+</style>
 </head>
 <body>
     <div class="container">
@@ -685,6 +742,12 @@
                     </div>
                 </form>
             </div>
+        </div>
+
+        <div style="display:flex;justify-content:flex-end;margin:0 0 10px;">
+            <button class="btn btn-pause" type="button" onclick="pauseAllAccounts()" style="padding:10px 14px;">
+                <i class="fa-solid fa-pause"></i> Pause / Resume All
+            </button>
         </div>
 
         <div class="accounts-list" id="accounts-container">
@@ -799,6 +862,7 @@
                 const data = await res.json();
                 if (data.status === 'ok') {
                     delete refreshCooldowns[accountId];
+                    showAlert('Account deleted and runtime stopped.', 'success');
                     loadStats();
                 } else {
                     alert('Error: ' + (data.error || 'Unknown'));
@@ -806,6 +870,50 @@
             } catch (err) {
                 alert('Error: ' + err.message);
             }
+        }
+
+        async function pauseAccount(accountId) {
+            try {
+                const res = await fetch('/api/user/pause-account', {
+                    method: 'POST', headers: {'Content-Type':'application/json'}, credentials:'same-origin',
+                    body: JSON.stringify({account_id: accountId})
+                });
+                const data = await res.json();
+                if (data.status === 'ok') {
+                    showAlert(data.is_paused ? 'Account paused — live runtime stopped.' : 'Account resumed.', 'success');
+                    loadStats();
+                } else {
+                    showAlert(data.error || 'Pause failed');
+                }
+            } catch (e) { showAlert('Pause error: ' + e.message); }
+        }
+
+        async function restartAccount(accountId) {
+            if (!confirm('Restart this account runtime?')) return;
+            try {
+                const res = await fetch('/api/user/restart-account', {
+                    method: 'POST', headers: {'Content-Type':'application/json'}, credentials:'same-origin',
+                    body: JSON.stringify({account_id: accountId})
+                });
+                const data = await res.json();
+                if (data.status === 'ok') {
+                    showAlert('Account runtime restarted.', 'success');
+                    setTimeout(loadStats, 1200);
+                } else {
+                    showAlert(data.error || 'Restart failed');
+                }
+            } catch (e) { showAlert('Restart error: ' + e.message); }
+        }
+
+        async function pauseAllAccounts() {
+            try {
+                const res = await fetch('/api/user/pause-all', {method:'POST', credentials:'same-origin'});
+                const data = await res.json();
+                if (data.status === 'ok') {
+                    showAlert(data.all_paused ? 'All accounts paused.' : 'All accounts resumed.', 'success');
+                    loadStats();
+                } else showAlert(data.error || 'Pause all failed');
+            } catch (e) { showAlert('Pause all error: ' + e.message); }
         }
 
         // ============ SINGLE CARD REFRESH (30s COOLDOWN, NO SUCCESS MSG) ============
@@ -991,6 +1099,9 @@
         }
 
         function statusInfo(acc) {
+            if (acc.is_paused || acc.status === 'PAUSED') {
+                return { cls: 'offline', text: 'Paused' };
+            }
             const s = acc.status || 'ONLINE';
             const br = {
                 'BR_CHECKING': 'Checking',
@@ -1082,6 +1193,10 @@
                             <span class="detail-label">Region</span>
                             <span class="detail-value">${regionSafe}</span>
                         </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Likes</span>
+                            <span class="detail-value">${Number(acc.likes || 0).toLocaleString()}</span>
+                        </div>
                     </div>
 
                     <div class="updated-line">
@@ -1121,12 +1236,29 @@
                         <button class="btn btn-ghost btn-refresh" onclick="refreshAccount('${uidSafe}')">
                             <i class="fa-solid fa-rotate"></i> Refresh
                         </button>
+                        <button class="btn btn-pause" onclick="pauseAccount('${uidSafe}')">
+                            <i class="fa-solid fa-pause"></i> ${acc.is_paused || acc.status === 'PAUSED' ? 'Resume' : 'Pause'}
+                        </button>
+                        <button class="btn btn-restart" onclick="restartAccount('${uidSafe}')">
+                            <i class="fa-solid fa-power-off"></i> Restart
+                        </button>
                         <button class="btn btn-danger" onclick="removeAccount('${uidSafe}')">
                             <i class="fa-solid fa-trash"></i> Delete
                         </button>
                     </div>
                 </div>
             `;
+        }
+
+        function afSetLoading(btn, loading) {
+            if (!btn) return;
+            if (loading) { btn.dataset.afLabel = btn.innerHTML; btn.classList.add('af-loading'); btn.disabled = true; }
+            else { if (btn.dataset.afLabel) btn.innerHTML = btn.dataset.afLabel; btn.classList.remove('af-loading'); btn.disabled = false; }
+        }
+
+        async function afButtonAction(btn, fn) {
+            afSetLoading(btn, true);
+            try { return await fn(); } finally { afSetLoading(btn, false); }
         }
 
         async function loadStats() {
@@ -1283,6 +1415,14 @@
 
         // ============ INIT ============
         loadStats();
+        document.addEventListener('click', function(e) {
+            const btn = e.target.closest('.acc-actions .btn, #pause-all-btn, .toggle-btn');
+            if (btn && !btn.disabled) {
+                btn.classList.add('af-loading');
+                setTimeout(() => btn.classList.remove('af-loading'), 900);
+            }
+        });
+
         setInterval(loadStats, 4000);                          // Light stats poll every 4s (silent)
         setInterval(autoRefreshAll, AUTO_REFRESH_INTERVAL_MS); // Auto refresh ALL every 5 min
         countdownTimer = setInterval(tickCountdown, 1000);

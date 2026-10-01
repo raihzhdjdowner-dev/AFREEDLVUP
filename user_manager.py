@@ -12,7 +12,25 @@ import string
 import asyncio
 from typing import Dict, List, Optional, Any
 
-USERS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "users.json")
+PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.environ.get("RAILWAY_VOLUME_MOUNT_PATH") or os.path.join(PROJECT_DIR, "data")
+os.makedirs(DATA_DIR, exist_ok=True)
+USERS_FILE = os.path.join(DATA_DIR, "users.json")
+
+# One-time migration: preserve an existing bundled users.json when the
+# newly-attached Railway Volume is empty. Never overwrite existing volume data.
+_LEGACY_USERS_FILE = os.path.join(PROJECT_DIR, "users.json")
+try:
+    if (not os.path.exists(USERS_FILE)
+            and os.path.isfile(_LEGACY_USERS_FILE)
+            and os.path.abspath(USERS_FILE) != os.path.abspath(_LEGACY_USERS_FILE)):
+        import shutil
+        shutil.copy2(_LEGACY_USERS_FILE, USERS_FILE)
+        print(f"[PERSISTENCE] Migrated users.json -> {USERS_FILE}")
+except Exception as e:
+    print(f"[PERSISTENCE] users.json migration skipped: {e}")
+
+print(f"[PERSISTENCE] user_manager DATA_DIR={DATA_DIR}")
 _users_lock = asyncio.Lock()
 
 

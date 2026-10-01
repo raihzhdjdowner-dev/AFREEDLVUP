@@ -9,6 +9,7 @@ import socket
 import struct
 import time
 import os
+import shutil
 import uuid
 import itertools
 from datetime import datetime
@@ -38,10 +39,34 @@ from dashboard_server import bot_state, start_web_dashboard
 # ==================== CONFIGURATION ====================
 WEB_HOST = "0.0.0.0"
 WEB_PORT = 20331
-ACCOUNTS_FILE = "accounts.json"
-TOKEN_CACHE_FILE = "token_cache.json"
-DEVICES_FILE = "devices.json"
+
+# ==================== RAILWAY PERSISTENT STORAGE ====================
+# Railway exposes RAILWAY_VOLUME_MOUNT_PATH automatically when a Volume
+# is attached. Locally, keep using a project-local data/ directory.
+PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.environ.get("RAILWAY_VOLUME_MOUNT_PATH") or os.path.join(PROJECT_DIR, "data")
+os.makedirs(DATA_DIR, exist_ok=True)
+
+def _persistent_path(filename: str) -> str:
+    return os.path.join(DATA_DIR, filename)
+
+def _migrate_legacy_file(filename: str) -> str:
+    target = _persistent_path(filename)
+    legacy = os.path.join(PROJECT_DIR, filename)
+    try:
+        if not os.path.exists(target) and os.path.isfile(legacy) and os.path.abspath(target) != os.path.abspath(legacy):
+            shutil.copy2(legacy, target)
+            print(f"[PERSISTENCE] Migrated {filename} -> {target}")
+    except Exception as e:
+        print(f"[PERSISTENCE] Migration skipped for {filename}: {e}")
+    return target
+
+ACCOUNTS_FILE = _migrate_legacy_file("accounts.json")
+TOKEN_CACHE_FILE = _migrate_legacy_file("token_cache.json")
+DEVICES_FILE = _migrate_legacy_file("devices.json")
 TOKEN_CACHE_TTL = 1200
+
+print(f"[PERSISTENCE] DATA_DIR={DATA_DIR}")
 
 # 🔥 Battle Royale Sequential Queue Configuration
 START_MATCH_INTERVAL = 4.0
@@ -706,51 +731,90 @@ async def build_majorlogin_payload(open_id, access_token, platform, client_versi
         print_error(f"[MAJORLOGIN_BUILD] Payload creation failed: {e}")
         return None
 
-async def send_majorlogin(data, release_version, server_url):
-    try:
-        url = f"{server_url}MajorLogin" if server_url.endswith('/') else f"{server_url}/MajorLogin"
-        req_headers = headers.copy()
-        req_headers["ReleaseVersion"] = str(release_version)
-        response = await client.post(url, headers=req_headers, data=data)
-        if response.status_code != 200:
-            print_error(f"[MAJORLOGIN] Server rejected payload with status {response.status_code}")
-            return None
-        response_content = response.content
-        if len(response_content) < 40:
-            return None
-
-        res_proto = thunderFF_pb2.MajorLoginRes()
-        try:
-            res_proto.ParseFromString(response_content)
-            if res_proto.region and res_proto.token:
-                return res_proto
-        except Exception:
-            pass
-
-        if len(response_content) > 64:
-            try:
-                res_proto = thunderFF_pb2.MajorLoginRes()
-                res_proto.ParseFromString(response_content[64:])
-                if res_proto.region and res_proto.token:
-                    return res_proto
-            except Exception:
-                pass
-
-        for offset in range(min(128, len(response_content))):
-            try:
-                candidate = thunderFF_pb2.MajorLoginRes()
-                candidate.ParseFromString(response_content[offset:])
-                if candidate.region and candidate.token:
-                    return candidate
-            except Exception:
-                pass
-
-        res_proto = thunderFF_pb2.MajorLoginRes()
-        res_proto.ParseFromString(response_content)
-        return res_proto
-    except Exception as e:
-        print_error(f"[MAJORLOGIN] Connection error: {e}")
+async def _parse_majorlogin_response(raw: bytes):
+    """Parse MajorLoginRes while tolerating common transport/header prefixes."""
+    if not raw:
         return None
+    offsets = [0, 64, 48, 32, 16, 8, 4, 1]
+    seen = set()
+    for off in offsets + list(range(min(128, len(raw)))):
+        if off in seen or off >= len(raw):
+            continue
+        seen.add(off)
+        try:
+            candidate = thunderFF_pb2.MajorLoginRes()
+            candidate.ParseFromString(raw[off:])
+            if (getattr(candidate, 'token', '') or getattr(candidate, 'account_id', 0)) and (
+                getattr(candidate, 'region', '') or getattr(candidate, 'url', '')
+            ):
+                return candidate
+        except Exception:
+            continue
+    return None
+
+async def send_majorlogin(data, release_version, server_url):
+    """Try the supplied MajorLogin implementation's endpoint first, then legacy endpoint.
+
+    The response is still converted to the project's generated MajorLoginRes so the
+    existing GetLoginData/TCP/dashboard flow remains unchanged.
+    """
+    endpoints = []
+    # Endpoint used by the uploaded MajorLogin implementation.
+    endpoints.append("https://loginbp.ppmainecoonghj.com/MajorLogin")
+    # Keep the version-configured endpoint as a fallback.
+    if server_url:
+        base = str(server_url).rstrip('/')
+        endpoints.append(f"{base}/MajorLogin")
+
+    # De-duplicate while preserving order.
+    endpoints = list(dict.fromkeys(endpoints))
+
+    for url in endpoints:
+        try:
+            req_headers = headers.copy()
+            req_headers["ReleaseVersion"] = str(release_version)
+            req_headers["Authorization"] = "Bearer"
+            req_headers["X-GA-SV"] = str(int(time.time()))
+            # Match the supplied implementation for the new endpoint.
+            if "loginbp.ppmainecoonghj.com" in url:
+                req_headers["User-Agent"] = (
+                    "UnityPlayer/2022.3.47f1 (UnityWebRequest/1.0, libcurl/8.5.0-DEV)"
+                )
+                req_headers["X-Unity-Version"] = "2022.3.47f1"
+                req_headers["Content-Type"] = "application/octet-stream"
+
+            print_info(f"[MAJORLOGIN] POST {url}")
+            print_info(f"[MAJORLOGIN] ReleaseVersion={release_version} body_len={len(data or b'')}")
+            response = await client.post(url, headers=req_headers, content=data)
+            print_info(f"[MAJORLOGIN] status={response.status_code} resp_len={len(response.content)}")
+
+            if response.status_code != 200:
+                print_warning(f"[MAJORLOGIN] {url} -> HTTP {response.status_code}")
+                continue
+
+            raw = response.content
+            res_proto = await _parse_majorlogin_response(raw)
+            if res_proto is not None:
+                # If the response omits a base URL, retain the configured endpoint.
+                if not getattr(res_proto, 'url', ''):
+                    try:
+                        res_proto.url = str(server_url or '').rstrip('/')
+                    except Exception:
+                        pass
+                print_success(
+                    f"[MAJORLOGIN] Parsed successfully via {url} | "
+                    f"UID={getattr(res_proto, 'account_id', '')} "
+                    f"region={getattr(res_proto, 'region', '')}"
+                )
+                return res_proto
+
+            print_error(
+                f"[MAJORLOGIN] Parse failed | len={len(raw)} | prefix={raw[:80].hex()}"
+            )
+        except Exception as e:
+            print_error(f"[MAJORLOGIN] {url} error: {e}")
+
+    return None
 
 async def send_getlogin(data, base_url, token, release_version):
     try:
@@ -1631,6 +1695,7 @@ async def functional_lone_wolf(addrs, starter_packet, account_region, client_ver
                                     )
                                 )
                                 play_matches.append(new_match)
+                                bot_state.register_match_task(uid_str, new_match)
 
                                 consecutive_parse_failures = 0
                                 print_success(
@@ -1653,6 +1718,11 @@ async def functional_lone_wolf(addrs, starter_packet, account_region, client_ver
 
                                 try:
                                     await new_match
+                                except asyncio.CancelledError:
+                                    # Child match cancellation is expected when Pause/Delete is pressed.
+                                    if not bot_state.is_paused(uid_str):
+                                        raise
+                                    print_warning(f"[MATCH #{match_index}] Cancelled by pause | UID: {uid_str}")
                                 except Exception as e:
                                     print_error(f"[MATCH #{match_index}] Match error: {e}")
                                 finally:
@@ -1661,6 +1731,7 @@ async def functional_lone_wolf(addrs, starter_packet, account_region, client_ver
                                         await drain_task
                                     except asyncio.CancelledError:
                                         pass
+                                    bot_state.unregister_match_task(uid_str, new_match)
 
                                 play_matches[:] = [m for m in play_matches if not m.done()]
 
@@ -1735,6 +1806,10 @@ async def functional_lone_wolf(addrs, starter_packet, account_region, client_ver
         for m in play_matches:
             if not m.done():
                 m.cancel()
+            try:
+                bot_state.unregister_match_task(uid_str, m)
+            except Exception:
+                pass
 
 async def informational(addrs, starter_packet, key, iv, region="BD", account_id="", max_reconnects=3):
     uid_str = str(account_id)
@@ -1832,6 +1907,52 @@ def _register_credentials(account_data: Dict):
             bot_state.account_credentials[f"tok_{account_data['auth_token'][:20]}"] = account_data
     except Exception:
         pass
+
+
+def _sync_profile_to_user_store(account_data: Dict):
+    """Persist native login profile fields into users.json without changing credentials."""
+    try:
+        users_path = _persistent_path("users.json")
+        _migrate_legacy_file("users.json")
+        if not os.path.exists(users_path):
+            return
+        with open(users_path, "r", encoding="utf-8") as f:
+            users = json.load(f)
+        if not isinstance(users, dict):
+            return
+        auth_uid = str(account_data.get("auth_uid") or "")
+        access_token = str(account_data.get("access_token") or "")
+        game_uid = str(account_data.get("account_id") or "")
+        changed = False
+        for user in users.values():
+            for acc in user.get("accounts", []):
+                stored_uid = str(acc.get("uid") or "")
+                stored_tok = str(acc.get("token") or "")
+                if not ((auth_uid and stored_uid == auth_uid) or
+                        (access_token and stored_tok and stored_tok == access_token) or
+                        (game_uid and stored_uid == game_uid)):
+                    continue
+                fields = {
+                    "account_id": game_uid,
+                    "nickname": account_data.get("nickname", ""),
+                    "region": account_data.get("region", "BD"),
+                    "level": int(account_data.get("level", 1) or 1),
+                    "exp": int(account_data.get("exp", 0) or 0),
+                    "current_exp": int(account_data.get("exp", 0) or 0),
+                }
+                if "initial_exp" not in acc:
+                    fields["initial_exp"] = int(account_data.get("exp", 0) or 0)
+                for k,v in fields.items():
+                    if v != "" and acc.get(k) != v:
+                        acc[k] = v
+                        changed = True
+        if changed:
+            tmp = users_path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(users, f, indent=2, ensure_ascii=False)
+            os.replace(tmp, users_path)
+    except Exception as e:
+        print_warning(f"[PROFILE] users.json sync skipped: {e}")
 
 
 async def refresh_account_profile(account_data_or_uid: Any):
@@ -1961,6 +2082,7 @@ async def process_account_uid_pass(uid: str, password: str) -> Optional[Dict]:
             'auth_password': password
         }
         _register_credentials(account_data)
+        _sync_profile_to_user_store(account_data)
         cache_set(uid, account_data)
         return account_data
     except Exception as e:
@@ -2074,6 +2196,7 @@ async def process_account_token(access_token: str) -> Optional[Dict]:
             'auth_token': access_token
         }
         _register_credentials(account_data)
+        _sync_profile_to_user_store(account_data)
         cache_set(cache_key, account_data)
         return account_data
     except Exception as e:
@@ -2281,36 +2404,61 @@ async def main():
         if uid_str in bot_state.auth_to_game_id:
             resolved_uids.add(str(bot_state.auth_to_game_id[uid_str]))
 
-        for u in resolved_uids:
-            if u in bot_state.account_workers:
-                try:
-                    bot_state.account_workers[u].cancel()
-                except Exception:
-                    pass
-                bot_state.account_workers.pop(u, None)
+        # Stop every current runtime path first.
+        bot_state.cancel_account_runtime(uid_str, "restart-callback")
+        bot_state.paused_accounts.difference_update(resolved_uids)
 
-        accounts = load_accounts()
-        for acc in accounts:
+        # Prefer live credentials retained by the native login layer.
+        restart_data = None
+        for u in resolved_uids:
+            if u in bot_state.account_credentials:
+                restart_data = bot_state.account_credentials.get(u)
+                break
+        if restart_data:
+            if restart_data.get("auth_uid") and restart_data.get("auth_password"):
+                au = str(restart_data["auth_uid"])
+                pw = str(restart_data["auth_password"])
+                t = asyncio.create_task(account_loop_guest(au, pw))
+                bot_state.account_workers[au] = t
+                print_success(f"[RESTART] Guest worker restarted | UID: {au}")
+                return
+            if restart_data.get("token"):
+                tok = str(restart_data["token"])
+                t = asyncio.create_task(account_loop_token(tok))
+                bot_state.account_workers[tok[:16]] = t
+                print_success(f"[RESTART] Token worker restarted | token:{tok[:16]}")
+                return
+
+        # Fallback to the persistent accounts.json used by legacy deployments.
+        for acc in load_accounts():
             acc_u = str(acc.get("uid", ""))
             if acc_u in resolved_uids and acc.get("password"):
                 t = asyncio.create_task(account_loop_guest(acc_u, acc["password"]))
                 bot_state.account_workers[acc_u] = t
-                break
-            elif acc.get("token"):
-                tok = acc["token"]
+                return
+            if acc.get("token"):
+                tok = str(acc["token"])
                 if any(u in bot_state.account_token_map and bot_state.account_token_map[u] == tok for u in resolved_uids):
                     t = asyncio.create_task(account_loop_token(tok))
                     bot_state.account_workers[tok[:16]] = t
-                    break
+                    return
+
+        print_warning(f"[RESTART] No stored credentials found for {uid_str}")
 
     async def on_account_deleted_handler(deleted_ids):
         for d_id in deleted_ids:
+            bot_state.cancel_account_runtime(str(d_id), "delete-callback")
             cache_invalidate(str(d_id))
         sync_devices_with_accounts()
 
     async def on_pause_toggle_handler(uid, is_paused):
         if is_paused:
             bot_state.close_writers_for_account(str(uid))
+            for task in list(bot_state.active_match_tasks.get(str(uid), set())):
+                try:
+                    if not task.done(): task.cancel()
+                except Exception:
+                    pass
 
     bot_state.refresh_callbacks["on_account_added"] = on_account_added_handler
     bot_state.refresh_callbacks["on_account_deleted"] = on_account_deleted_handler
