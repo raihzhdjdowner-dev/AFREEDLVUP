@@ -2,6 +2,6 @@ aiohttp
 httpx
 requests
 google-play-scraper
+protobuf
 protobuf-decoder
 pycryptodome
-protobuf>=7.35.1,<8

@@ -158,20 +158,6 @@
             cursor: not-allowed;
         }
 
-        .btn-pause {
-            background: rgba(245, 158, 11, 0.10);
-            border: 1px solid rgba(245, 158, 11, 0.30);
-            color: #fbbf24;
-        }
-        .btn-pause:hover { background: rgba(245, 158, 11, 0.18); }
-
-        .btn-restart {
-            background: rgba(59, 130, 246, 0.10);
-            border: 1px solid rgba(59, 130, 246, 0.30);
-            color: #60a5fa;
-        }
-        .btn-restart:hover { background: rgba(59, 130, 246, 0.18); }
-
         .info-bar {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
@@ -556,7 +542,7 @@
         }
 
         .acc-actions {
-            display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
+            display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
         }
 
         .acc-actions .btn {
@@ -701,12 +687,6 @@
             </div>
         </div>
 
-        <div style="display:flex;justify-content:flex-end;margin:0 0 10px;">
-            <button class="btn btn-pause" type="button" onclick="pauseAllAccounts()" style="padding:10px 14px;">
-                <i class="fa-solid fa-pause"></i> Pause / Resume All
-            </button>
-        </div>
-
         <div class="accounts-list" id="accounts-container">
             <div class="loading">
                 <i class="fa-solid fa-circle-notch fa-spin"></i>
@@ -819,7 +799,6 @@
                 const data = await res.json();
                 if (data.status === 'ok') {
                     delete refreshCooldowns[accountId];
-                    showAlert('Account deleted and runtime stopped.', 'success');
                     loadStats();
                 } else {
                     alert('Error: ' + (data.error || 'Unknown'));
@@ -827,50 +806,6 @@
             } catch (err) {
                 alert('Error: ' + err.message);
             }
-        }
-
-        async function pauseAccount(accountId) {
-            try {
-                const res = await fetch('/api/user/pause-account', {
-                    method: 'POST', headers: {'Content-Type':'application/json'}, credentials:'same-origin',
-                    body: JSON.stringify({account_id: accountId})
-                });
-                const data = await res.json();
-                if (data.status === 'ok') {
-                    showAlert(data.is_paused ? 'Account paused — live runtime stopped.' : 'Account resumed.', 'success');
-                    loadStats();
-                } else {
-                    showAlert(data.error || 'Pause failed');
-                }
-            } catch (e) { showAlert('Pause error: ' + e.message); }
-        }
-
-        async function restartAccount(accountId) {
-            if (!confirm('Restart this account runtime?')) return;
-            try {
-                const res = await fetch('/api/user/restart-account', {
-                    method: 'POST', headers: {'Content-Type':'application/json'}, credentials:'same-origin',
-                    body: JSON.stringify({account_id: accountId})
-                });
-                const data = await res.json();
-                if (data.status === 'ok') {
-                    showAlert('Account runtime restarted.', 'success');
-                    setTimeout(loadStats, 1200);
-                } else {
-                    showAlert(data.error || 'Restart failed');
-                }
-            } catch (e) { showAlert('Restart error: ' + e.message); }
-        }
-
-        async function pauseAllAccounts() {
-            try {
-                const res = await fetch('/api/user/pause-all', {method:'POST', credentials:'same-origin'});
-                const data = await res.json();
-                if (data.status === 'ok') {
-                    showAlert(data.all_paused ? 'All accounts paused.' : 'All accounts resumed.', 'success');
-                    loadStats();
-                } else showAlert(data.error || 'Pause all failed');
-            } catch (e) { showAlert('Pause all error: ' + e.message); }
         }
 
         // ============ SINGLE CARD REFRESH (30s COOLDOWN, NO SUCCESS MSG) ============
@@ -1056,9 +991,6 @@
         }
 
         function statusInfo(acc) {
-            if (acc.is_paused || acc.status === 'PAUSED') {
-                return { cls: 'offline', text: 'Paused' };
-            }
             const s = acc.status || 'ONLINE';
             const br = {
                 'BR_CHECKING': 'Checking',
@@ -1188,12 +1120,6 @@
                     <div class="acc-actions">
                         <button class="btn btn-ghost btn-refresh" onclick="refreshAccount('${uidSafe}')">
                             <i class="fa-solid fa-rotate"></i> Refresh
-                        </button>
-                        <button class="btn btn-pause" onclick="pauseAccount('${uidSafe}')">
-                            <i class="fa-solid fa-pause"></i> ${acc.is_paused || acc.status === 'PAUSED' ? 'Resume' : 'Pause'}
-                        </button>
-                        <button class="btn btn-restart" onclick="restartAccount('${uidSafe}')">
-                            <i class="fa-solid fa-power-off"></i> Restart
                         </button>
                         <button class="btn btn-danger" onclick="removeAccount('${uidSafe}')">
                             <i class="fa-solid fa-trash"></i> Delete
