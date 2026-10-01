@@ -1087,7 +1087,7 @@
   <div id="upi-admin-msg" style="color:#8e9bb5;font-size:13px;margin-top:10px;"></div>
   <div style="overflow:auto;margin-top:20px;">
     <table style="width:100%;border-collapse:collapse;color:#f0f4fc;font-size:13px;">
-      <thead><tr><th style="text-align:left;padding:10px;">Buyer / Customer</th><th style="text-align:left;padding:10px;">Plan</th><th style="text-align:left;padding:10px;">Amount</th><th style="text-align:left;padding:10px;">UTR</th><th style="text-align:left;padding:10px;">Status</th><th style="padding:10px;">Screenshot / Actions</th></tr></thead>
+      <thead><tr><th style="text-align:left;padding:10px;">Customer</th><th style="text-align:left;padding:10px;">Plan</th><th style="text-align:left;padding:10px;">Amount</th><th style="text-align:left;padding:10px;">UTR</th><th style="text-align:left;padding:10px;">Status</th><th style="padding:10px;">Screenshot / Actions</th></tr></thead>
       <tbody id="payment-requests-body"></tbody>
     </table>
   </div>
@@ -1105,11 +1105,11 @@ async function loadUPIPayments(){
   (d.requests||[]).forEach(x=>{
    const tr=document.createElement('tr'); tr.style.borderTop='1px solid rgba(255,255,255,.08)';
    const img=x.screenshot?`<a href="/payment-files/${encodeURIComponent(x.screenshot)}" target="_blank" style="color:#4facfe">View</a>`:'—';
-   tr.innerHTML=`<td style="padding:10px"><b>${escPay(x.username||'—')}</b><br>${escPay(x.customer_name)}<br><small>${escPay(x.contact)}</small></td>
+   tr.innerHTML=`<td style="padding:10px">${escPay(x.customer_name)}<br><small>${escPay(x.contact)}</small></td>
    <td style="padding:10px">${escPay(x.plan)}</td><td style="padding:10px">₹${Number(x.amount||0).toLocaleString('en-IN')}</td>
    <td style="padding:10px;font-family:monospace">${escPay(x.utr)}</td><td style="padding:10px">${escPay(x.status)}${x.active?' • active':' • inactive'}</td>
    <td style="padding:10px">${img}<br>
-   <button class="btn btn-success" style="margin:4px 2px;padding:6px 9px" onclick="paymentAction('${x.id}','verify')">Accept</button>
+   <button class="btn btn-success" style="margin:4px 2px;padding:6px 9px" onclick="paymentAction('${x.id}','verify')">Verify</button>
    <button class="btn btn-danger" style="margin:4px 2px;padding:6px 9px" onclick="paymentAction('${x.id}','reject')">Reject</button>
    <button class="btn btn-secondary" style="margin:4px 2px;padding:6px 9px" onclick="paymentAction('${x.id}','${x.active?'deactivate':'activate'}')">${x.active?'Deactivate':'Activate'}</button></td>`;
    body.appendChild(tr);
