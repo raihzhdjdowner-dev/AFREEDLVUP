@@ -1881,7 +1881,7 @@ async def refresh_account_profile(account_data_or_uid: Any):
         pass
 
 
-async def process_account_uid_pass(uid: str, password: str, owner: Optional[str] = None) -> Optional[Dict]:
+async def process_account_uid_pass(uid: str, password: str) -> Optional[Dict]:
     cached = cache_get(uid)
     if cached:
         acc_id = str(cached['account_id'])
@@ -1934,8 +1934,6 @@ async def process_account_uid_pass(uid: str, password: str, owner: Optional[str]
         region = majorlogin_response.region or get_proto_field(dict_res, 3, "BD")
 
         bot_state.register_account(uid=acc_id, nickname=nickname, region=region, level=level, exp=exp, likes=likes, auth_uid=str(uid))
-        if owner:
-            bot_state.accounts[acc_id]['owner'] = str(owner)
         print_success(f"[✓] Login Success: UID {acc_id} | {nickname} | Lvl {level} | EXP: {exp:,}")
 
         account_data = {
@@ -1960,8 +1958,7 @@ async def process_account_uid_pass(uid: str, password: str, owner: Optional[str]
             'login_payload_data': login_payload_data,
             'auth_type': 'guest',
             'auth_uid': uid,
-            'auth_password': password,
-            'owner': str(owner) if owner else ''
+            'auth_password': password
         }
         _register_credentials(account_data)
         cache_set(uid, account_data)
@@ -1971,7 +1968,7 @@ async def process_account_uid_pass(uid: str, password: str, owner: Optional[str]
         return None
 
 
-async def process_account_token(access_token: str, owner: Optional[str] = None) -> Optional[Dict]:
+async def process_account_token(access_token: str) -> Optional[Dict]:
     cache_key = f"tok_{access_token[:20]}"
     cached = cache_get(cache_key)
     if cached:
@@ -1981,12 +1978,14 @@ async def process_account_token(access_token: str, owner: Optional[str] = None) 
         exp_val = cached.get('exp', 0)
         print_success(f"[✓] Online (Token Cache): UID {acc_id} | {nick} | Lvl {lvl} | EXP: {exp_val:,}")
         bot_state.register_account(
-            uid=acc_id, nickname=nick, region=cached.get('region', 'BD'),
-            level=lvl, exp=exp_val, likes=cached.get('likes', 0), token=access_token
+            uid=acc_id,
+            nickname=nick,
+            region=cached.get('region', 'BD'),
+            level=lvl,
+            exp=exp_val,
+            likes=cached.get('likes', 0),
+            token=access_token
         )
-        if owner:
-            cached['owner'] = str(owner)
-            bot_state.accounts.setdefault(acc_id, {})['owner'] = str(owner)
         _register_credentials(cached)
         return cached
 
@@ -2048,8 +2047,6 @@ async def process_account_token(access_token: str, owner: Optional[str] = None) 
         region = majorlogin_response.region or get_proto_field(dict_res, 3, "BD")
 
         bot_state.register_account(uid=acc_id, nickname=nickname, region=region, level=level, exp=exp, likes=likes, token=access_token)
-        if owner:
-            bot_state.accounts[acc_id]['owner'] = str(owner)
         print_success(f"[✓] Login Success (Token): UID {acc_id} | {nickname} | Lvl {level} | EXP: {exp:,}")
 
         account_data = {
@@ -2074,8 +2071,7 @@ async def process_account_token(access_token: str, owner: Optional[str] = None) 
             'login_payload_data': login_payload_data,
             'platform': platform,
             'auth_type': 'token',
-            'auth_token': access_token,
-            'owner': str(owner) if owner else ''
+            'auth_token': access_token
         }
         _register_credentials(account_data)
         cache_set(cache_key, account_data)
@@ -2163,7 +2159,7 @@ async def run_account_worker(account_data: Dict, label: str):
                     pass
 
 
-async def account_loop_guest(uid: str, password: str, owner: Optional[str] = None):
+async def account_loop_guest(uid: str, password: str):
     uid_str = str(uid)
     bot_state.account_workers[uid_str] = asyncio.current_task()
     acc_id = None
@@ -2174,7 +2170,7 @@ async def account_loop_guest(uid: str, password: str, owner: Optional[str] = Non
                 bot_state.update_status(uid_str, "CONNECTING")
             except Exception:
                 pass
-            account_data = await process_account_uid_pass(uid_str, password, owner=owner)
+            account_data = await process_account_uid_pass(uid_str, password)
             if not account_data:
                 print_error(f"Login failed for UID: {uid_str}. Retrying in 15 seconds...")
                 try:
@@ -2207,11 +2203,11 @@ async def account_loop_guest(uid: str, password: str, owner: Optional[str] = Non
             await asyncio.sleep(10)
 
 
-async def account_loop_token(token: str, owner: Optional[str] = None):
+async def account_loop_token(token: str):
     tok_key = token[:16]
     while True:
         try:
-            account_data = await process_account_token(token, owner=owner)
+            account_data = await process_account_token(token)
             if not account_data:
                 await asyncio.sleep(15)
                 continue
@@ -2261,21 +2257,6 @@ async def main():
         print_success(f"[✓] Dashboard UI Active: http://localhost:{WEB_PORT}")
     except Exception as e:
         print_error(f"Could not start web dashboard: {e}")
-
-    async def on_user_account_added_handler(username, data):
-        """Start a user-owned account and tag its live bot state with the website username."""
-        owner = str(username).strip()
-        if not owner:
-            return
-        if data.get("token"):
-            tok = str(data["token"]).strip()
-            task = asyncio.create_task(account_loop_token(tok, owner=owner))
-            bot_state.account_workers[tok[:16]] = task
-        elif data.get("uid") and data.get("password"):
-            u = str(data["uid"]).strip()
-            p = str(data["password"]).strip()
-            task = asyncio.create_task(account_loop_guest(u, p, owner=owner))
-            bot_state.account_workers[u] = task
 
     async def on_account_added_handler(data):
         sync_devices_with_accounts()
@@ -2331,7 +2312,6 @@ async def main():
         if is_paused:
             bot_state.close_writers_for_account(str(uid))
 
-    bot_state.refresh_callbacks["on_user_account_added"] = on_user_account_added_handler
     bot_state.refresh_callbacks["on_account_added"] = on_account_added_handler
     bot_state.refresh_callbacks["on_account_deleted"] = on_account_deleted_handler
     bot_state.refresh_callbacks["on_refresh_account"] = on_refresh_account_handler

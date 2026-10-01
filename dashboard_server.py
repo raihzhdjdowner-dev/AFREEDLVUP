@@ -612,15 +612,9 @@ async def api_submit_payment(request: web.Request) -> web.Response:
                 fields[part.name] = (await part.text()).strip()
 
         plan = fields.get("plan", "")
-        username = str(fields.get("username", "")).strip()
         cfg = _payment_config()
         if plan not in cfg["plans"]:
             return _json_error("Invalid plan", 400)
-        if not username:
-            return _json_error("Panel username is required", 400)
-        user = await get_user(username)
-        if not user:
-            return _json_error("Panel username not found", 400)
         if not fields.get("customer_name") or not fields.get("contact") or not fields.get("utr"):
             return _json_error("Name, contact and UTR are required", 400)
         if not screenshot_name:
@@ -630,19 +624,14 @@ async def api_submit_payment(request: web.Request) -> web.Response:
         req = {
             "id": secrets.token_hex(8),
             "created_at": int(time.time()),
-            "username": username,
             "customer_name": fields["customer_name"][:100],
             "contact": fields["contact"][:100],
             "utr": fields["utr"][:100],
             "plan": plan,
             "amount": item["price"],
-            "days": int(item.get("days", 1)),
-            "accounts": int(item.get("accounts", 1)),
             "screenshot": screenshot_name,
             "status": "pending",
             "active": True,
-            "notification": "Payment submitted. Waiting for admin verification.",
-            "notification_at": int(time.time()),
         }
         items = _payment_requests()
         items.insert(0, req)
@@ -733,20 +722,13 @@ async def api_admin_payment_action(request: web.Request) -> web.Response:
                 break
         if not found:
             return _json_error("Payment request not found", 404)
-        now = int(time.time())
         if action == "verify":
             found["status"] = "verified"
-            found["verified_at"] = now
+            found["verified_at"] = int(time.time())
             found["active"] = True
-            found["notification"] = f"Payment accepted for {found.get('plan', 'plan')}. Your purchase has been verified."
-            found["notification_type"] = "success"
-            found["notification_at"] = now
         elif action == "reject":
             found["status"] = "rejected"
             found["active"] = False
-            found["notification"] = f"Payment request for {found.get('plan', 'plan')} was rejected. Please contact support."
-            found["notification_type"] = "error"
-            found["notification_at"] = now
         elif action == "activate":
             found["active"] = True
         elif action == "deactivate":
@@ -979,14 +961,22 @@ def _build_user_accounts(username: str, user: Dict[str, Any]) -> List[Dict[str, 
         merged = None
 
         for bot_uid, bot_acc in bot_state.accounts.items():
-            if bot_acc.get("owner") != username:
-                continue
             bot_uid_str = str(bot_uid)
             bot_actual = str(bot_acc.get("actual_uid", ""))
             bot_display = str(bot_acc.get("display_uid", ""))
-            if (bot_uid_str == user_uid or bot_actual == user_uid or
-                    bot_display == user_uid or
-                    (user_token_prefix and bot_uid_str == user_token_prefix)):
+            bot_auth = str(bot_acc.get("auth_uid", ""))
+            bot_token = str(bot_acc.get("token", ""))
+            # Native login stores the game UID as the bot_state key, while
+            # users.json stores the original/auth UID. Match both sides.
+            matched = (bot_uid_str == user_uid or bot_actual == user_uid or
+                       bot_display == user_uid or bot_auth == user_uid or
+                       (user_token_prefix and (bot_uid_str == user_token_prefix or
+                                                bot_token.startswith(user_token_prefix))))
+            if matched:
+                # This match is based on the user's own stored credential, so
+                # safely bind the live native account to this dashboard user.
+                if not bot_acc.get("owner"):
+                    bot_acc["owner"] = username
                 merged = dict(bot_acc)
                 real_uid = bot_actual or bot_uid_str
                 merged["uid"] = real_uid
@@ -1024,19 +1014,6 @@ def _build_user_accounts(username: str, user: Dict[str, Any]) -> List[Dict[str, 
     return result_accounts
 
 
-async def api_user_payment_requests(request: web.Request) -> web.Response:
-    err = await _require_user(request)
-    if err: return err
-    try:
-        sess = await get_session(_get_sid(request))
-        username = sess["username"]
-        requests = [x for x in _payment_requests() if str(x.get("username", "")) == username]
-        requests.sort(key=lambda x: x.get("created_at", 0), reverse=True)
-        return web.json_response({"status": "ok", "requests": requests[:20]})
-    except Exception as e:
-        return _json_error(str(e), 500)
-
-
 async def api_user_stats(request: web.Request) -> web.Response:
     err = await _require_user(request)
     if err: return err
@@ -1059,7 +1036,16 @@ async def api_user_stats(request: web.Request) -> web.Response:
             for check_key in [real_uid, user_input_uid, str(acc.get("uid", ""))]:
                 if check_key and check_key in bot_state.accounts:
                     cand = bot_state.accounts[check_key]
-                    if cand.get("owner") == username:
+                    if cand.get("owner") == username or str(cand.get("auth_uid", "")) == user_input_uid:
+                        if not cand.get("owner") and str(cand.get("auth_uid", "")) == user_input_uid:
+                            cand["owner"] = username
+                        if fresh is None or cand.get("current_exp", 0) > fresh.get("current_exp", 0):
+                            fresh = cand
+            if fresh is None and user_input_uid:
+                for cand in bot_state.accounts.values():
+                    if str(cand.get("auth_uid", "")) == user_input_uid:
+                        if not cand.get("owner"):
+                            cand["owner"] = username
                         if fresh is None or cand.get("current_exp", 0) > fresh.get("current_exp", 0):
                             fresh = cand
             if fresh:
@@ -1291,7 +1277,6 @@ async def start_web_dashboard(host: str = "0.0.0.0", port: int = 20331):
     app.router.add_post("/api/user/add-account", api_user_add_account)
     app.router.add_post("/api/user/remove-account", api_user_remove_account)
     app.router.add_post("/api/user/refresh", api_user_refresh)
-    app.router.add_get("/api/user/payment-requests", api_user_payment_requests)
 
     # public
     app.router.add_get("/api/public/popup", api_public_popup)
