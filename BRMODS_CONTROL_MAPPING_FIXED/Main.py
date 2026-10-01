@@ -9,7 +9,6 @@ import socket
 import struct
 import time
 import os
-import shutil
 import uuid
 import itertools
 from datetime import datetime
@@ -29,6 +28,10 @@ from google_play_scraper import app as play_scraper
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad
 from protobuf_decoder.protobuf_decoder import Parser
+try:
+    import blackboxprotobuf
+except ImportError:
+    blackboxprotobuf = None
 from message_ids import MESSAGE_ID_TO_NAME
 import thunderFF_pb2
 import StartMatch_pb2
@@ -39,34 +42,10 @@ from dashboard_server import bot_state, start_web_dashboard
 # ==================== CONFIGURATION ====================
 WEB_HOST = "0.0.0.0"
 WEB_PORT = 20331
-
-# ==================== RAILWAY PERSISTENT STORAGE ====================
-# Railway exposes RAILWAY_VOLUME_MOUNT_PATH automatically when a Volume
-# is attached. Locally, keep using a project-local data/ directory.
-PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.environ.get("RAILWAY_VOLUME_MOUNT_PATH") or os.path.join(PROJECT_DIR, "data")
-os.makedirs(DATA_DIR, exist_ok=True)
-
-def _persistent_path(filename: str) -> str:
-    return os.path.join(DATA_DIR, filename)
-
-def _migrate_legacy_file(filename: str) -> str:
-    target = _persistent_path(filename)
-    legacy = os.path.join(PROJECT_DIR, filename)
-    try:
-        if not os.path.exists(target) and os.path.isfile(legacy) and os.path.abspath(target) != os.path.abspath(legacy):
-            shutil.copy2(legacy, target)
-            print(f"[PERSISTENCE] Migrated {filename} -> {target}")
-    except Exception as e:
-        print(f"[PERSISTENCE] Migration skipped for {filename}: {e}")
-    return target
-
-ACCOUNTS_FILE = _migrate_legacy_file("accounts.json")
-TOKEN_CACHE_FILE = _migrate_legacy_file("token_cache.json")
-DEVICES_FILE = _migrate_legacy_file("devices.json")
+ACCOUNTS_FILE = "accounts.json"
+TOKEN_CACHE_FILE = "token_cache.json"
+DEVICES_FILE = "devices.json"
 TOKEN_CACHE_TTL = 1200
-
-print(f"[PERSISTENCE] DATA_DIR={DATA_DIR}")
 
 # 🔥 Battle Royale Sequential Queue Configuration
 START_MATCH_INTERVAL = 4.0
@@ -732,6 +711,13 @@ async def build_majorlogin_payload(open_id, access_token, platform, client_versi
         return None
 
 async def send_majorlogin(data, release_version, server_url):
+    """MajorLogin with tolerant response decoding.
+
+    Some deployments return a valid MajorLogin payload with an outer wrapper
+    or fields that the generated protobuf rejects as a wire-format error.
+    Keep the normal protobuf path first, then fall back to blackboxprotobuf
+    using the field numbers from MajorLoginRes.
+    """
     try:
         url = f"{server_url}MajorLogin" if server_url.endswith('/') else f"{server_url}/MajorLogin"
         req_headers = headers.copy()
@@ -740,39 +726,101 @@ async def send_majorlogin(data, release_version, server_url):
         if response.status_code != 200:
             print_error(f"[MAJORLOGIN] Server rejected payload with status {response.status_code}")
             return None
-        response_content = response.content
-        if len(response_content) < 40:
+
+        body = response.content or b""
+        if len(body) < 20:
+            print_error(f"[MAJORLOGIN] Empty/short response ({len(body)} bytes)")
             return None
 
-        res_proto = thunderFF_pb2.MajorLoginRes()
-        try:
-            res_proto.ParseFromString(response_content)
-            if res_proto.region and res_proto.token:
-                return res_proto
-        except Exception:
-            pass
-
-        if len(response_content) > 64:
+        # 1) Keep the existing generated-protobuf path.
+        candidates = [body]
+        candidates.extend(body[offset:] for offset in range(1, min(128, len(body))))
+        for raw in candidates:
             try:
-                res_proto = thunderFF_pb2.MajorLoginRes()
-                res_proto.ParseFromString(response_content[64:])
-                if res_proto.region and res_proto.token:
-                    return res_proto
+                obj = thunderFF_pb2.MajorLoginRes()
+                obj.ParseFromString(raw)
+                if obj.token and (obj.account_id or obj.region or obj.url):
+                    print_success("[MAJORLOGIN] Response decoded with MajorLoginRes")
+                    return obj
             except Exception:
-                pass
+                continue
 
-        for offset in range(min(128, len(response_content))):
+        # 2) Fallback: decode the raw/wrapped response without assuming the
+        # generated descriptor matches every server-side response variant.
+        if blackboxprotobuf is None:
+            print_error("[MAJORLOGIN] protobuf fallback unavailable: blackboxprotobuf not installed")
+            return None
+
+        def _first(d, keys):
+            if not isinstance(d, dict):
+                return None
+            for k in keys:
+                if k in d:
+                    return d[k]
+            return None
+
+        def _walk(obj):
+            if isinstance(obj, dict):
+                yield obj
+                for v in obj.values():
+                    yield from _walk(v)
+            elif isinstance(obj, list):
+                for v in obj:
+                    yield from _walk(v)
+
+        for offset in (0, 1, 2, 4, 8, 16, 32, 64):
+            if offset >= len(body):
+                continue
             try:
-                candidate = thunderFF_pb2.MajorLoginRes()
-                candidate.ParseFromString(response_content[offset:])
-                if candidate.region and candidate.token:
-                    return candidate
+                decoded, _ = blackboxprotobuf.decode_message(body[offset:])
             except Exception:
-                pass
+                continue
+            for node in _walk(decoded):
+                account_id = _first(node, ("1", 1, b"1", "account_id", b"account_id"))
+                region = _first(node, ("2", 2, b"2", "region", b"region"))
+                token = _first(node, ("8", 8, b"8", "token", b"token", "jwt", b"jwt"))
+                url_value = _first(node, ("10", 10, b"10", "url", b"url"))
+                server_time = _first(node, ("21", 21, b"21", "server_time", b"server_time"))
+                aes_ak = _first(node, ("22", 22, b"22", "aes_ak", b"aes_ak"))
+                iv_i = _first(node, ("23", 23, b"23", "iv_i", b"iv_i"))
 
-        res_proto = thunderFF_pb2.MajorLoginRes()
-        res_proto.ParseFromString(response_content)
-        return res_proto
+                if isinstance(token, bytes):
+                    token = token.decode("utf-8", "ignore")
+                if isinstance(region, bytes):
+                    region = region.decode("utf-8", "ignore")
+                if isinstance(url_value, bytes):
+                    url_value = url_value.decode("utf-8", "ignore")
+                if isinstance(aes_ak, str):
+                    aes_ak = aes_ak.encode()
+                if isinstance(iv_i, str):
+                    iv_i = iv_i.encode()
+
+                if token and (account_id is not None):
+                    obj = thunderFF_pb2.MajorLoginRes()
+                    try:
+                        obj.account_id = int(account_id)
+                    except Exception:
+                        pass
+                    obj.region = str(region or "BD")
+                    obj.token = str(token)
+                    if url_value:
+                        obj.url = str(url_value)
+                    try:
+                        if server_time is not None:
+                            obj.server_time = int(server_time)
+                    except Exception:
+                        pass
+                    if isinstance(aes_ak, (bytes, bytearray)):
+                        obj.aes_ak = bytes(aes_ak)
+                    if isinstance(iv_i, (bytes, bytearray)):
+                        obj.iv_i = bytes(iv_i)
+                    print_success("[MAJORLOGIN] Response decoded with tolerant protobuf fallback")
+                    return obj
+
+        # Do not hide the actual response shape when both decoders fail.
+        preview = body[:32].hex()
+        print_error(f"[MAJORLOGIN] Unable to decode response; len={len(body)} prefix={preview}")
+        return None
     except Exception as e:
         print_error(f"[MAJORLOGIN] Connection error: {e}")
         return None
@@ -1873,8 +1921,7 @@ def _register_credentials(account_data: Dict):
 def _sync_profile_to_user_store(account_data: Dict):
     """Persist native login profile fields into users.json without changing credentials."""
     try:
-        users_path = _persistent_path("users.json")
-        _migrate_legacy_file("users.json")
+        users_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "users.json")
         if not os.path.exists(users_path):
             return
         with open(users_path, "r", encoding="utf-8") as f:

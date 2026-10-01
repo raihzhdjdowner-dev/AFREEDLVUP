@@ -37,32 +37,10 @@ except Exception:
 
 
 
-# ==================== RAILWAY PERSISTENT STORAGE ====================
-PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.environ.get("RAILWAY_VOLUME_MOUNT_PATH") or os.path.join(PROJECT_DIR, "data")
-os.makedirs(DATA_DIR, exist_ok=True)
-
-def _persistent_path(filename: str) -> str:
-    return os.path.join(DATA_DIR, filename)
-
-def _migrate_legacy_file(filename: str) -> str:
-    target = _persistent_path(filename)
-    legacy = os.path.join(PROJECT_DIR, filename)
-    try:
-        if not os.path.exists(target) and os.path.isfile(legacy) and os.path.abspath(target) != os.path.abspath(legacy):
-            import shutil
-            shutil.copy2(legacy, target)
-            print(f"[PERSISTENCE] Migrated {filename} -> {target}")
-    except Exception as e:
-        print(f"[PERSISTENCE] Migration skipped for {filename}: {e}")
-    return target
-
 # ==================== UPI PAYMENT SYSTEM ====================
-PAYMENT_CONFIG_FILE = _migrate_legacy_file("payment_config.json")
-PAYMENT_REQUESTS_FILE = _migrate_legacy_file("payment_requests.json")
-PAYMENT_UPLOAD_DIR = os.path.join(DATA_DIR, "payment_uploads")
-os.makedirs(PAYMENT_UPLOAD_DIR, exist_ok=True)
-print(f"[PERSISTENCE] DATA_DIR={DATA_DIR}")
+PAYMENT_CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "payment_config.json")
+PAYMENT_REQUESTS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "payment_requests.json")
+PAYMENT_UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "payment_uploads")
 DEFAULT_PAYMENT_CONFIG = {
     "upi_id": "yourupi@upi",
     "qr_file": "",
@@ -649,7 +627,7 @@ def load_template(name: str) -> str:
 
 
 # ==================== POPUP CONFIG ====================
-POPUP_CONFIG_FILE = _migrate_legacy_file("popup_config.json")
+POPUP_CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "popup_config.json")
 
 DEFAULT_POPUP = {
     "enabled": True,
@@ -923,7 +901,12 @@ async def handle_dashboard_page(request: web.Request) -> web.Response:
     if await is_user_expired(sess["username"]):
         await destroy_session(sid)
         return web.HTTPFound("/login?expired=1")
-    return web.Response(text=load_template("dashboard.html"), content_type="text/html", charset="utf-8")
+    return web.Response(
+        text=load_template("dashboard.html"),
+        content_type="text/html",
+        charset="utf-8",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0", "Pragma": "no-cache"}
+    )
 
 
 # ==================== AUTH API ====================

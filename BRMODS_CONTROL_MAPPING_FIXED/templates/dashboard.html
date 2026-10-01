@@ -10,18 +10,20 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         :root {
-            --bg-base: #05070d;
-            --bg-card: #0a1018;
-            --bg-card-2: #0e1520;
-            --border-card: rgba(255, 255, 255, 0.07);
-            --accent-cyan: #38bdf8;
-            --accent-blue: #3b82f6;
-            --accent-green: #10b981;
+            --bg-base: #07050a;
+            --bg-card: #100a13;
+            --bg-card-2: #160d19;
+            --border-card: rgba(255, 45, 117, 0.13);
+            --accent-cyan: #ff4f9a;
+            --accent-blue: #e91e63;
+            --accent-green: #34d399;
             --accent-amber: #f59e0b;
             --accent-red: #ef4444;
-            --accent-purple: #a78bfa;
-            --text-main: #e8eef7;
-            --text-muted: #7a8799;
+            --accent-purple: #c084fc;
+            --accent-pink: #ff2d75;
+            --accent-pink-deep: #c2185b;
+            --text-main: #f8edf3;
+            --text-muted: #9e8793;
         }
 
         * {
@@ -35,12 +37,33 @@
         body {
             background-color: var(--bg-base);
             background-image:
-                radial-gradient(ellipse at 15% -10%, rgba(56, 189, 248, 0.08) 0%, transparent 55%),
-                radial-gradient(ellipse at 85% 110%, rgba(139, 92, 246, 0.06) 0%, transparent 55%);
+                radial-gradient(ellipse at 12% -8%, rgba(255, 45, 117, 0.12) 0%, transparent 48%),
+                radial-gradient(ellipse at 88% 112%, rgba(192, 132, 252, 0.09) 0%, transparent 48%),
+                radial-gradient(ellipse at 50% 45%, rgba(233, 30, 99, 0.035) 0%, transparent 55%);
             color: var(--text-main);
             min-height: 100vh;
             padding: 16px;
             font-size: 15px;
+            position: relative;
+            isolation: isolate;
+        }
+
+        body::before {
+            content: '';
+            position: fixed;
+            inset: -25%;
+            z-index: -1;
+            pointer-events: none;
+            background:
+                radial-gradient(circle at 25% 35%, rgba(255, 45, 117, 0.045), transparent 28%),
+                radial-gradient(circle at 75% 65%, rgba(192, 132, 252, 0.04), transparent 28%);
+            animation: ambient-drift 16s ease-in-out infinite alternate;
+            will-change: transform;
+        }
+
+        @keyframes ambient-drift {
+            from { transform: translate3d(-1%, -1%, 0) scale(1); }
+            to { transform: translate3d(1%, 1%, 0) scale(1.035); }
         }
 
         .container { max-width: 720px; margin: 0 auto; }
@@ -50,22 +73,44 @@
             align-items: center;
             justify-content: space-between;
             padding: 14px 18px;
-            background: linear-gradient(180deg, #0b121c 0%, #080d16 100%);
+            background: linear-gradient(135deg, rgba(23, 10, 20, 0.98), rgba(10, 7, 13, 0.98));
             border: 1px solid var(--border-card);
             border-radius: 18px;
             margin-bottom: 14px;
-            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.38), 0 0 0 1px rgba(255, 45, 117, 0.025);
+            position: relative;
+            overflow: hidden;
+        }
+
+        header::after {
+            content: '';
+            position: absolute;
+            left: -20%;
+            top: 0;
+            width: 55%;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(255, 45, 117, 0.9), transparent);
+            opacity: 0.8;
+            transform: translateX(-10%);
+            animation: header-sweep 7s ease-in-out infinite;
+            pointer-events: none;
+        }
+
+        @keyframes header-sweep {
+            0%, 65% { transform: translateX(-10%); opacity: 0; }
+            75% { opacity: 0.9; }
+            100% { transform: translateX(260%); opacity: 0; }
         }
 
         .brand { display: flex; align-items: center; gap: 12px; }
 
         .logo-box {
             width: 42px; height: 42px;
-            background: linear-gradient(135deg, #38bdf8, #3b82f6);
+            background: linear-gradient(135deg, #ff2d75, #c2185b);
             border-radius: 12px;
             display: flex; align-items: center; justify-content: center;
             font-size: 18px; color: #fff;
-            box-shadow: 0 0 20px rgba(56, 189, 248, 0.35);
+            box-shadow: 0 0 22px rgba(255, 45, 117, 0.28);
             flex-shrink: 0;
         }
 
@@ -83,11 +128,11 @@
 
         .user-chip {
             display: flex; align-items: center; gap: 6px;
-            background: rgba(56, 189, 248, 0.08);
-            border: 1px solid rgba(56, 189, 248, 0.22);
+            background: rgba(255, 45, 117, 0.07);
+            border: 1px solid rgba(255, 45, 117, 0.22);
             border-radius: 10px; padding: 7px 11px;
             font-size: 11.5px; font-weight: 700;
-            color: var(--accent-cyan);
+            color: #ff78ad;
             font-family: 'JetBrains Mono', monospace;
         }
 
@@ -118,16 +163,22 @@
             display: inline-flex; align-items: center; justify-content: center;
             gap: 6px; padding: 8px 13px; border-radius: 10px;
             font-size: 12.5px; font-weight: 700;
-            cursor: pointer; transition: all 0.2s ease;
+            cursor: pointer; transition: transform 0.22s ease, box-shadow 0.22s ease, background 0.22s ease, border-color 0.22s ease, color 0.22s ease;
             border: none; outline: none; white-space: nowrap;
+            will-change: transform;
         }
 
-        .btn:active { transform: scale(0.97); }
+        .btn:hover:not(:disabled) { transform: translateY(-1px); }
+        .btn:active:not(:disabled) { transform: translateY(0) scale(0.98); }
 
         .btn-primary {
-            background: linear-gradient(135deg, #38bdf8, #3b82f6);
-            color: #04080f;
-            box-shadow: 0 3px 12px rgba(56, 189, 248, 0.28);
+            background: linear-gradient(135deg, #ff2d75, #e91e63 55%, #c2185b);
+            color: #fff;
+            box-shadow: 0 5px 16px rgba(255, 45, 117, 0.25);
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            box-shadow: 0 9px 24px rgba(255, 45, 117, 0.34);
         }
 
         .btn-danger {
@@ -159,11 +210,32 @@
         }
 
         .btn-pause {
-            background: rgba(245, 158, 11, 0.10);
-            border: 1px solid rgba(245, 158, 11, 0.30);
-            color: #fbbf24;
+            background: linear-gradient(135deg, rgba(255, 45, 117, 0.13), rgba(194, 24, 91, 0.10));
+            border: 1px solid rgba(255, 45, 117, 0.34);
+            color: #ff78ad;
+            box-shadow: 0 3px 14px rgba(255, 45, 117, 0.08);
         }
-        .btn-pause:hover { background: rgba(245, 158, 11, 0.18); }
+        .btn-pause:hover:not(:disabled) {
+            background: linear-gradient(135deg, rgba(255, 45, 117, 0.22), rgba(194, 24, 91, 0.16));
+            border-color: rgba(255, 45, 117, 0.55);
+            box-shadow: 0 7px 20px rgba(255, 45, 117, 0.16);
+        }
+        .btn-pause.is-paused {
+            background: linear-gradient(135deg, rgba(52, 211, 153, 0.13), rgba(16, 185, 129, 0.08));
+            border-color: rgba(52, 211, 153, 0.34);
+            color: #6ee7b7;
+        }
+        .btn-pause.is-busy {
+            opacity: 0.72;
+            cursor: wait;
+        }
+        .btn-pause.is-busy i {
+            animation: spin-soft 0.8s linear infinite;
+        }
+
+        @keyframes spin-soft {
+            to { transform: rotate(360deg); }
+        }
 
         .btn-restart {
             background: rgba(59, 130, 246, 0.10);
@@ -324,28 +396,36 @@
         .accounts-list { display: flex; flex-direction: column; gap: 14px; }
 
         .account-card {
-            background: linear-gradient(180deg, #0b121c 0%, #080d16 100%);
+            background: linear-gradient(180deg, rgba(20, 10, 20, 0.98) 0%, rgba(9, 7, 13, 0.98) 100%);
             border: 1px solid var(--border-card);
             border-radius: 20px; padding: 20px;
-            transition: all 0.25s;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+            transition: transform 0.28s cubic-bezier(.16,1,.3,1), border-color 0.28s ease, box-shadow 0.28s ease;
+            box-shadow: 0 5px 22px rgba(0, 0, 0, 0.34);
             position: relative; overflow: hidden;
+            will-change: transform;
         }
 
         .account-card::before {
             content: '';
-            position: absolute; top: 0; left: 0; right: 0;
-            height: 2px;
-            background: linear-gradient(90deg, transparent, rgba(56, 189, 248, 0.5), transparent);
-            opacity: 0; transition: opacity 0.3s;
+            position: absolute; top: 0; left: -35%;
+            width: 70%; height: 2px;
+            background: linear-gradient(90deg, transparent, rgba(255, 45, 117, 0.8), transparent);
+            opacity: 0;
+            transition: opacity 0.25s ease, transform 0.5s ease;
+            transform: translateX(-10%);
+            pointer-events: none;
         }
 
         .account-card:hover {
-            border-color: rgba(255, 255, 255, 0.12);
-            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+            transform: translateY(-2px);
+            border-color: rgba(255, 45, 117, 0.28);
+            box-shadow: 0 12px 32px rgba(0, 0, 0, 0.42), 0 0 0 1px rgba(255, 45, 117, 0.045);
         }
 
-        .account-card:hover::before { opacity: 1; }
+        .account-card:hover::before {
+            opacity: 1;
+            transform: translateX(145%);
+        }
 
         .acc-status {
             display: inline-flex; align-items: center; gap: 6px;
@@ -556,7 +636,12 @@
         }
 
         .acc-actions {
-            display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
+            display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px;
+        }
+
+        .acc-actions .btn {
+            min-width: 0;
+            transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease, border-color 0.2s ease;
         }
 
         .acc-actions .btn {
@@ -603,6 +688,17 @@
             .exp-box .exp-value { font-size: 15px; }
             .exp-box .exp-label { font-size: 8.5px; }
             .account-card { padding: 16px; border-radius: 18px; }
+            .acc-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .acc-actions .btn { min-height: 42px; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                scroll-behavior: auto !important;
+                transition-duration: 0.01ms !important;
+            }
         }
     </style>
 </head>
@@ -702,8 +798,8 @@
         </div>
 
         <div style="display:flex;justify-content:flex-end;margin:0 0 10px;">
-            <button class="btn btn-pause" type="button" onclick="pauseAllAccounts()" style="padding:10px 14px;">
-                <i class="fa-solid fa-pause"></i> Pause / Resume All
+            <button id="pause-all-btn" class="btn btn-pause" type="button" onclick="pauseAllAccounts()" style="padding:10px 14px;">
+                <i class="fa-solid fa-pause"></i> <span>Pause All</span>
             </button>
         </div>
 
@@ -829,7 +925,34 @@
             }
         }
 
+        function setPauseButtonState(button, paused, busy = false) {
+            if (!button) return;
+            button.classList.toggle('is-paused', !!paused);
+            button.classList.toggle('is-busy', !!busy);
+            button.dataset.paused = paused ? 'true' : 'false';
+            button.disabled = !!busy;
+            const icon = button.querySelector('i');
+            const label = button.querySelector('span');
+            if (icon) icon.className = 'fa-solid ' + (busy ? 'fa-spinner' : (paused ? 'fa-play' : 'fa-pause'));
+            if (label) label.textContent = busy ? (paused ? 'Pausing…' : 'Resuming…') : (paused ? 'Resume' : 'Pause');
+        }
+
+        function syncPauseAllButton(paused) {
+            const button = document.getElementById('pause-all-btn');
+            if (!button) return;
+            button.classList.toggle('is-paused', !!paused);
+            button.dataset.paused = paused ? 'true' : 'false';
+            const icon = button.querySelector('i');
+            const label = button.querySelector('span');
+            if (icon) icon.className = 'fa-solid ' + (paused ? 'fa-play' : 'fa-pause');
+            if (label) label.textContent = paused ? 'Resume All' : 'Pause All';
+        }
+
         async function pauseAccount(accountId) {
+            const card = document.querySelector('.account-card[data-uid="' + CSS.escape(String(accountId)) + '"]');
+            const button = card ? card.querySelector('[data-pause-btn]') : null;
+            const wasPaused = button?.dataset.paused === 'true';
+            setPauseButtonState(button, wasPaused, true);
             try {
                 const res = await fetch('/api/user/pause-account', {
                     method: 'POST', headers: {'Content-Type':'application/json'}, credentials:'same-origin',
@@ -837,12 +960,17 @@
                 });
                 const data = await res.json();
                 if (data.status === 'ok') {
+                    setPauseButtonState(button, !!data.is_paused, false);
                     showAlert(data.is_paused ? 'Account paused — live runtime stopped.' : 'Account resumed.', 'success');
-                    loadStats();
+                    await loadStats();
                 } else {
+                    setPauseButtonState(button, wasPaused, false);
                     showAlert(data.error || 'Pause failed');
                 }
-            } catch (e) { showAlert('Pause error: ' + e.message); }
+            } catch (e) {
+                setPauseButtonState(button, wasPaused, false);
+                showAlert('Pause error: ' + e.message);
+            }
         }
 
         async function restartAccount(accountId) {
@@ -863,14 +991,36 @@
         }
 
         async function pauseAllAccounts() {
+            const button = document.getElementById('pause-all-btn');
+            const wasPaused = button?.dataset.paused === 'true';
+            if (button) {
+                button.disabled = true;
+                button.classList.add('is-busy');
+                const icon = button.querySelector('i');
+                const label = button.querySelector('span');
+                if (icon) icon.className = 'fa-solid fa-spinner';
+                if (label) label.textContent = 'Working…';
+            }
             try {
                 const res = await fetch('/api/user/pause-all', {method:'POST', credentials:'same-origin'});
                 const data = await res.json();
                 if (data.status === 'ok') {
+                    syncPauseAllButton(!!data.all_paused);
                     showAlert(data.all_paused ? 'All accounts paused.' : 'All accounts resumed.', 'success');
-                    loadStats();
-                } else showAlert(data.error || 'Pause all failed');
-            } catch (e) { showAlert('Pause all error: ' + e.message); }
+                    await loadStats();
+                } else {
+                    syncPauseAllButton(wasPaused);
+                    showAlert(data.error || 'Pause all failed');
+                }
+            } catch (e) {
+                syncPauseAllButton(wasPaused);
+                showAlert('Pause all error: ' + e.message);
+            } finally {
+                if (button) {
+                    button.disabled = false;
+                    button.classList.remove('is-busy');
+                }
+            }
         }
 
         // ============ SINGLE CARD REFRESH (30s COOLDOWN, NO SUCCESS MSG) ============
@@ -1189,8 +1339,9 @@
                         <button class="btn btn-ghost btn-refresh" onclick="refreshAccount('${uidSafe}')">
                             <i class="fa-solid fa-rotate"></i> Refresh
                         </button>
-                        <button class="btn btn-pause" onclick="pauseAccount('${uidSafe}')">
-                            <i class="fa-solid fa-pause"></i> ${acc.is_paused || acc.status === 'PAUSED' ? 'Resume' : 'Pause'}
+                        <button class="btn btn-pause ${acc.is_paused || acc.status === 'PAUSED' ? 'is-paused' : ''}" data-pause-btn="1" data-paused="${!!(acc.is_paused || acc.status === 'PAUSED')}" onclick="pauseAccount('${uidSafe}')">
+                            <i class="fa-solid ${acc.is_paused || acc.status === 'PAUSED' ? 'fa-play' : 'fa-pause'}"></i>
+                            <span>${acc.is_paused || acc.status === 'PAUSED' ? 'Resume' : 'Pause'}</span>
                         </button>
                         <button class="btn btn-restart" onclick="restartAccount('${uidSafe}')">
                             <i class="fa-solid fa-power-off"></i> Restart
@@ -1219,6 +1370,10 @@
                 }
 
                 userData = data;
+
+                const allPaused = Array.isArray(data.accounts) && data.accounts.length > 0 &&
+                    data.accounts.every(a => !!(a.is_paused || a.status === 'PAUSED'));
+                syncPauseAllButton(allPaused);
 
                 document.getElementById('chip-username').innerText = data.username;
                 document.getElementById('info-used').innerText = data.accounts_used;
@@ -1306,6 +1461,13 @@
                 expVals[0].innerText = (account.initial_exp || 0).toLocaleString();
                 expVals[1].innerText = (account.current_exp || 0).toLocaleString();
                 expVals[2].innerText = '+' + (account.gained_exp || 0).toLocaleString();
+            }
+
+            // Keep Pause/Resume button synchronized during silent auto-refresh.
+            const paused = !!(account.is_paused || account.status === 'PAUSED');
+            const pauseBtn = cardEl.querySelector('[data-pause-btn]');
+            if (pauseBtn && !pauseBtn.classList.contains('is-busy')) {
+                setPauseButtonState(pauseBtn, paused, false);
             }
         }
 

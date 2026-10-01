@@ -5,3 +5,4 @@ google-play-scraper
 protobuf
 protobuf-decoder
 pycryptodome
+blackboxprotobuf
