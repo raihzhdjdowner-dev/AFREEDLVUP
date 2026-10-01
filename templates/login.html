@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login — AFREED DEVELOPER Level Up</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        :root {
+            --bg-base: #000000;
+            --bg-card: rgba(13, 19, 36, 0.85);
+            --border-card: rgba(0, 242, 254, 0.15);
+            --accent-cyan: #00f2fe;
+            --accent-blue: #4facfe;
+            --accent-purple: #7f00ff;
+            --accent-green: #00ff88;
+            --accent-red: #ff3366;
+            --text-main: #f0f4fc;
+            --text-muted: #8e9bb5;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Outfit', sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-base);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        /* ====== FALLING CODE RAIN (BLURRED + GLOWING) ====== */
+        #code-rain {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 0;
+            pointer-events: none;
+            opacity: 0.55;
+            filter: blur(2.5px) brightness(1.8) contrast(1.3) saturate(1.4) drop-shadow(0 0 6px currentColor);
+        }
+
+        .login-wrapper {
+            width: 100%;
+            max-width: 440px;
+            position: relative;
+            z-index: 2;
+        }
+
+        .brand-top {
+            text-align: center;
+            margin-bottom: 32px;
+        }
+
+        /* Avatar logo — TOP */
+        .brand-logo {
+            width: 72px;
+            height: 72px;
+            margin: 0 auto 16px;
+            border-radius: 50%;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 0 30px rgba(0, 242, 254, 0.45);
+            animation: pulse-glow 3s infinite alternate;
+            border: 2px solid var(--accent-cyan);
+            background: #000;
+            transition: border-color 1.5s linear, box-shadow 1.5s linear;
+        }
+
+        .brand-logo img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+
+        @keyframes pulse-glow {
+            0% { box-shadow: 0 0 20px rgba(0, 242, 254, 0.35); }
+            100% { box-shadow: 0 0 40px rgba(127, 0, 255, 0.55); }
+        }
+
+        .brand-top h1 {
+            font-size: 26px;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+            background: linear-gradient(90deg, #ffffff, var(--accent-cyan));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            transition: background 1.5s linear;
+        }
+
+        .brand-top p {
+            font-size: 13px;
+            color: var(--text-muted);
+            margin-top: 6px;
+        }
+
+        .login-card {
+            background: rgba(8, 12, 22, 0.85);
+            border: 1px solid var(--border-card);
+            border-radius: 22px;
+            padding: 32px;
+            backdrop-filter: blur(16px);
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+            transition: border-color 1.5s linear;
+        }
+
+        .login-card h2 {
+            font-size: 20px;
+            font-weight: 700;
+            margin-bottom: 6px;
+        }
+
+        .login-card .subtitle {
+            font-size: 13px;
+            color: var(--text-muted);
+            margin-bottom: 24px;
+        }
+
+        .form-group {
+            margin-bottom: 18px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-muted);
+            margin-bottom: 7px;
+        }
+
+        .input-wrap {
+            position: relative;
+        }
+
+        .input-wrap i.icon {
+            position: absolute;
+            left: 14px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--text-muted);
+            font-size: 15px;
+            pointer-events: none;
+        }
+
+        .form-input {
+            width: 100%;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 12px 14px 12px 42px;
+            color: #fff;
+            font-size: 14px;
+            outline: none;
+            transition: all 1.5s linear;
+        }
+
+        .form-input:focus {
+            border-color: var(--accent-cyan);
+            box-shadow: 0 0 0 3px rgba(0, 242, 254, 0.12);
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 12px 20px;
+            border-radius: 12px;
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 1.5s linear;
+            border: none;
+            outline: none;
+            width: 100%;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-cyan));
+            color: #040914;
+            box-shadow: 0 4px 16px rgba(0, 242, 254, 0.3);
+            margin-top: 6px;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 24px rgba(0, 242, 254, 0.45);
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .btn-back {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: var(--text-muted);
+            margin-top: 14px;
+        }
+
+        .btn-back:hover {
+            background: rgba(255, 255, 255, 0.08);
+            color: var(--text-main);
+            border-color: rgba(255, 255, 255, 0.2);
+            transform: translateY(-2px);
+        }
+
+        .alert {
+            padding: 11px 14px;
+            border-radius: 10px;
+            font-size: 13px;
+            font-weight: 500;
+            margin-bottom: 16px;
+            display: none;
+        }
+
+        .alert.show { display: block; }
+
+        .alert-error {
+            background: rgba(255, 51, 102, 0.12);
+            border: 1px solid rgba(255, 51, 102, 0.35);
+            color: #ff8099;
+        }
+
+        .alert-success {
+            background: rgba(0, 255, 136, 0.12);
+            border: 1px solid rgba(0, 255, 136, 0.35);
+            color: #66ffb8;
+        }
+
+        .footer-text {
+            text-align: center;
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 22px;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid rgba(0, 0, 0, 0.25);
+            border-top-color: #040914;
+            border-radius: 50%;
+            animation: spin 0.7s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <canvas id="code-rain"></canvas>
+
+    <div class="login-wrapper">
+        <div class="brand-top">
+            <div class="brand-logo">
+                <img src="https://ibb.co/JFksmbfw" alt="Logo">
+            </div>
+            <h1>AFREED DEVELOPER LEVEL UP</h1>
+            <p>Login to access your dashboard</p>
+        </div>
+
+        <div class="login-card">
+            <h2>Welcome Back</h2>
+            <p class="subtitle">Enter your credentials to continue</p>
+
+            <div class="alert alert-error" id="alert-box"></div>
+
+            <form id="login-form" onsubmit="submitLogin(event)">
+                <div class="form-group">
+                    <label>Username</label>
+                    <div class="input-wrap">
+                        <i class="fa-solid fa-user icon"></i>
+                        <input type="text" class="form-input" id="username"
+                               placeholder="Enter your username" autocomplete="username" required>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>Password</label>
+                    <div class="input-wrap">
+                        <i class="fa-solid fa-lock icon"></i>
+                        <input type="password" class="form-input" id="password"
+                               placeholder="Enter your password" autocomplete="current-password" required>
+                    </div>
+                </div>
+
+                <button type="submit" class="btn btn-primary" id="submit-btn">
+                    <i class="fa-solid fa-right-to-bracket"></i>
+                    <span>Login</span>
+                </button>
+            </form>
+
+            <button class="btn btn-back" onclick="goBack()">
+                <i class="fa-solid fa-arrow-left"></i>
+                <span>Back</span>
+            </button>
+
+            <p class="footer-text">
+                <i class="fa-solid fa-circle-info"></i>
+                Contact admin to get your credentials
+            </p>
+        </div>
+    </div>
+
+    <script>
+        // ========== RAINBOW THEME (switch every 1.5s, transition 1.5s linear) ==========
+        const THEMES = [
+            { cyan: '#00f2fe', blue: '#4facfe', purple: '#7f00ff' },
+            { cyan: '#ec4899', blue: '#a855f7', purple: '#7f00ff' },
+            { cyan: '#22c55e', blue: '#10b981', purple: '#059669' },
+            { cyan: '#eab308', blue: '#f59e0b', purple: '#d97706' },
+            { cyan: '#ef4444', blue: '#f97316', purple: '#dc2626' },
+            { cyan: '#3b82f6', blue: '#6366f1', purple: '#8b5cf6' },
+            { cyan: '#14b8a6', blue: '#06b6d4', purple: '#0891b2' },
+            { cyan: '#f43f5e', blue: '#fb7185', purple: '#e11d48' },
+            { cyan: '#84cc16', blue: '#65a30d', purple: '#4d7c0f' },
+            { cyan: '#06b6d4', blue: '#0ea5e9', purple: '#0284c7' },
+            { cyan: '#d946ef', blue: '#c026d3', purple: '#a21caf' },
+            { cyan: '#facc15', blue: '#fbbf24', purple: '#f59e0b' }
+        ];
+
+        let themeIndex = 0;
+
+        function applyTheme() {
+            const t = THEMES[themeIndex];
+            document.documentElement.style.setProperty('--accent-cyan', t.cyan);
+            document.documentElement.style.setProperty('--accent-blue', t.blue);
+            document.documentElement.style.setProperty('--accent-purple', t.purple);
+            document.documentElement.style.setProperty('--border-card', t.cyan + '30');
+            themeIndex = (themeIndex + 1) % THEMES.length;
+        }
+
+        applyTheme();
+        setInterval(applyTheme, 1500); // 1.5 seconds
+
+        // ========== FALLING CODE RAIN (BLURRED + GLOWING) ==========
+        const canvas = document.getElementById('code-rain');
+        const ctx = canvas.getContext('2d');
+
+        let W, H;
+        function resize() {
+            W = canvas.width = window.innerWidth;
+            H = canvas.height = window.innerHeight;
+        }
+        resize();
+        window.addEventListener('resize', resize);
+
+        const CHARS = "01アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲン<>{}[]()/\\|=+-*&%$#@!?";
+        const fontSize = 14;
+        let columns = Math.floor(W / fontSize);
+        let drops = new Array(columns).fill(1);
+
+        window.addEventListener('resize', () => {
+            columns = Math.floor(W / fontSize);
+            drops = new Array(columns).fill(1);
+        });
+
+        function getColor() {
+            const styles = getComputedStyle(document.documentElement);
+            return styles.getPropertyValue('--accent-cyan').trim() || '#00f2fe';
+        }
+
+        function drawRain() {
+            // Softer fade trail (chars linger longer for glowing effect)
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.05)';
+            ctx.fillRect(0, 0, W, H);
+
+            ctx.font = "bold " + fontSize + "px 'JetBrains Mono', monospace";
+            ctx.textBaseline = 'top';
+
+            const color = getColor();
+
+            for (let i = 0; i < drops.length; i++) {
+                const char = CHARS.charAt(Math.floor(Math.random() * CHARS.length));
+                const x = i * fontSize;
+                const y = drops[i] * fontSize;
+
+                // Leading char (BRIGHT white with strong glow)
+                ctx.fillStyle = '#ffffff';
+                ctx.globalAlpha = 1;
+                ctx.shadowColor = color;
+                ctx.shadowBlur = 14;
+                ctx.fillText(char, x, y);
+
+                // Trailing char (BRIGHT accent color with strong glow)
+                ctx.fillStyle = color;
+                ctx.globalAlpha = 0.85;
+                ctx.shadowColor = color;
+                ctx.shadowBlur = 12;
+                ctx.fillText(char, x, y - fontSize);
+
+                // Second trail (dimmer glow)
+                ctx.globalAlpha = 0.5;
+                ctx.shadowBlur = 6;
+                ctx.fillText(char, x, y - fontSize * 2);
+
+                // Third trail (faint)
+                ctx.globalAlpha = 0.25;
+                ctx.shadowBlur = 3;
+                ctx.fillText(char, x, y - fontSize * 3);
+
+                ctx.globalAlpha = 1;
+                ctx.shadowBlur = 0;
+
+                if (y > H && Math.random() > 0.975) {
+                    drops[i] = 0;
+                }
+                drops[i]++;
+            }
+        }
+
+        setInterval(drawRain, 55);
+
+        // ========== LOGIN LOGIC ==========
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('expired') === '1') {
+            showAlert('Your session has expired. Please login again.', 'error');
+        }
+
+        function showAlert(msg, type = 'error') {
+            const box = document.getElementById('alert-box');
+            box.className = 'alert alert-' + type + ' show';
+            box.innerText = msg;
+        }
+
+        function hideAlert() {
+            document.getElementById('alert-box').classList.remove('show');
+        }
+
+        async function submitLogin(e) {
+            e.preventDefault();
+            hideAlert();
+
+            const username = document.getElementById('username').value.trim();
+            const password = document.getElementById('password').value.trim();
+            const btn = document.getElementById('submit-btn');
+            const originalHtml = btn.innerHTML;
+
+            if (!username || !password) {
+                showAlert('Please enter username and password', 'error');
+                return;
+            }
+
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span><span>Logging in...</span>';
+
+            try {
+                const res = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({ username, password })
+                });
+                const data = await res.json();
+
+                if (data.status === 'ok') {
+                    showAlert('Login successful! Redirecting...', 'success');
+                    setTimeout(() => { window.location.href = '/dashboard'; }, 500);
+                } else {
+                    showAlert(data.error || 'Login failed', 'error');
+                    btn.disabled = false;
+                    btn.innerHTML = originalHtml;
+                }
+            } catch (err) {
+                showAlert('Connection error: ' + err.message, 'error');
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
+            }
+        }
+
+        function goBack() {
+            window.location.href = '/';
+        }
+    </script>
+</body>
+</html>
