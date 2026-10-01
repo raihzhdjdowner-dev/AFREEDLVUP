@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>UPI Payment — AFREED DEVELOPER LV UP</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<style>
+:root{--bg:#000;--card:#0a0a0f;--border:rgba(255,255,255,.08);--blue:#3b82f6;--purple:#8b5cf6;--green:#10b981;--text:#fff;--muted:#94a3b8}
+*{box-sizing:border-box;margin:0;padding:0;font-family:Outfit,sans-serif}
+body{background:#000;color:var(--text);min-height:100vh;padding:20px}
+.wrap{max-width:760px;margin:auto}
+.top{display:flex;justify-content:space-between;align-items:center;padding:16px 0;border-bottom:1px solid var(--border)}
+.brand{font-weight:800;letter-spacing:.3px}
+.back{color:#cbd5e1;text-decoration:none;font-size:13px}
+.card{margin-top:24px;background:var(--card);border:1px solid var(--border);border-radius:20px;padding:24px;box-shadow:0 15px 50px #000}
+h1{text-align:center;font-size:28px;margin:10px 0 8px}
+.sub{text-align:center;color:var(--muted);font-size:13px;margin-bottom:22px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.paybox,.formbox{border:1px solid var(--border);border-radius:16px;padding:20px;background:rgba(255,255,255,.025)}
+.label{font-size:12px;color:var(--muted);margin-bottom:7px;display:block}
+.upi{font-family:"JetBrains Mono";font-size:16px;color:#fff;background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.25);padding:12px;border-radius:10px;word-break:break-all}
+.qr{display:block;width:min(100%,260px);aspect-ratio:1;object-fit:contain;background:#fff;border-radius:14px;margin:16px auto 4px}
+.amount{font-size:24px;font-weight:800;color:#a5b4fc;margin:8px 0 18px}
+input,select{width:100%;padding:12px 13px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:10px;color:#fff;outline:none;margin-bottom:14px}
+select option{background:#111;color:#fff}
+input[type=file]{padding:10px}
+button{width:100%;padding:13px;border:0;border-radius:11px;background:linear-gradient(135deg,#3b82f6,#8b5cf6);color:#fff;font-weight:800;cursor:pointer}
+.note{font-size:11px;color:var(--muted);line-height:1.6;margin-top:12px}
+#msg{display:none;margin-top:14px;padding:11px;border-radius:10px;font-size:13px}
+.ok{background:rgba(16,185,129,.12);border:1px solid rgba(16,185,129,.3);color:#6ee7b7}
+.err{background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3);color:#fca5a5}
+@media(max-width:650px){.grid{grid-template-columns:1fr}.card{padding:16px}h1{font-size:24px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="top"><div class="brand">AFREED DEVELOPER LV UP</div><a class="back" href="/">← Back</a></div>
+<div class="card">
+<h1>UPI Payment</h1>
+<p class="sub">Pay using the UPI ID or scan the QR, then submit your UTR and screenshot.</p>
+<div class="grid">
+<section class="paybox">
+<span class="label">SELECTED PLAN</span>
+<select id="plan"></select>
+<div class="amount" id="amount">₹0</div>
+<span class="label">UPI ID</span>
+<div class="upi" id="upi">Loading...</div>
+<img id="qr" class="qr" alt="UPI QR" style="display:none">
+<p class="note">After payment, keep the transaction ID/UTR and a clear payment screenshot ready. Requests are manually verified by the admin.</p>
+</section>
+<section class="formbox">
+<form id="paymentForm">
+<label class="label">Customer Name</label>
+<input name="customer_name" required maxlength="100" placeholder="Your name">
+<label class="label">Contact (Telegram / WhatsApp)</label>
+<input name="contact" required maxlength="100" placeholder="@username or phone">
+<label class="label">UTR / Transaction ID</label>
+<input name="utr" required maxlength="100" placeholder="Enter UTR">
+<label class="label">Payment Screenshot</label>
+<input name="screenshot" type="file" required accept="image/png,image/jpeg,image/webp">
+<button type="submit"><i class="fa-solid fa-paper-plane"></i> Submit Payment</button>
+<div id="msg"></div>
+</form>
+</section>
+</div>
+</div>
+</div>
+<script>
+let payment={};
+const params=new URLSearchParams(location.search);
+async function load(){
+ const r=await fetch('/api/public/payment'); const d=await r.json();
+ if(d.status!=='ok') throw new Error('Could not load payment settings');
+ payment=d.payment;
+ const sel=document.getElementById('plan');
+ Object.entries(payment.plans||{}).forEach(([name,p])=>{
+   const o=document.createElement('option');o.value=name;o.textContent=name+' — ₹'+Number(p.price).toLocaleString('en-IN');sel.appendChild(o);
+ });
+ if(payment.plans[params.get('plan')]) sel.value=params.get('plan');
+ update();
+ document.getElementById('upi').textContent=payment.upi_id||'Not configured';
+ if(payment.qr_file){const q=document.getElementById('qr');q.src='/payment-files/'+encodeURIComponent(payment.qr_file);q.style.display='block';}
+}
+function update(){const p=payment.plans?.[document.getElementById('plan').value];document.getElementById('amount').textContent=p?'₹'+Number(p.price).toLocaleString('en-IN'):'₹0'}
+document.getElementById('plan').addEventListener('change',update);
+document.getElementById('paymentForm').addEventListener('submit',async e=>{
+ e.preventDefault(); const msg=document.getElementById('msg'); msg.style.display='none';
+ const fd=new FormData(e.target); fd.set('plan',document.getElementById('plan').value);
+ try{const r=await fetch('/api/payment/submit',{method:'POST',body:fd});const d=await r.json();
+   msg.className=d.status==='ok'?'ok':'err';msg.textContent=d.status==='ok'?'Submitted successfully. Request ID: '+d.request_id:d.error||'Submission failed';msg.style.display='block';
+   if(d.status==='ok') e.target.reset();
+ }catch(err){msg.className='err';msg.textContent='Network error';msg.style.display='block'}
+});
+load().catch(e=>{document.getElementById('msg').textContent=e.message});
+</script>
+</body>
+</html>
