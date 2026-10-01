@@ -14,6 +14,10 @@ import itertools
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Any
 
+LOGIN_API = os.environ.get(
+    "LOGIN_API", "https://login-api-production-8504.up.railway.app"
+)
+
 if sys.platform == "win32":
     try:
         if hasattr(sys.stdout, 'reconfigure'):
@@ -1834,6 +1838,180 @@ def _register_credentials(account_data: Dict):
         pass
 
 
+def _link_user_uid_to_actual(uid_key: str, acc_id: str):
+    """
+    Creates a linked copy in bot_state.accounts so the dashboard shows the account
+    under the user's input UID (uid_key) while the bot internally uses acc_id.
+    """
+    try:
+        if str(uid_key) == str(acc_id):
+            # Same — just ensure display_uid is set
+            if str(acc_id) in bot_state.accounts:
+                bot_state.accounts[str(acc_id)]["display_uid"] = str(uid_key)
+            return
+
+        if str(acc_id) not in bot_state.accounts:
+            return
+
+        bot_state.accounts[str(uid_key)] = dict(bot_state.accounts[str(acc_id)])
+        bot_state.accounts[str(uid_key)]["uid"] = str(uid_key)
+        bot_state.accounts[str(uid_key)]["display_uid"] = str(uid_key)
+        bot_state.accounts[str(uid_key)]["actual_uid"] = str(acc_id)
+    except Exception as e:
+        print_error(f"_link_user_uid_to_actual error: {e}")
+
+
+def _bytes_from_hex(value) -> bytes:
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value)
+    text = str(value or "").strip()
+    if not text:
+        return b""
+    try:
+        return bytes.fromhex(text)
+    except Exception:
+        return b""
+
+
+def _session_from_login_api(data: Dict) -> Optional[Dict]:
+    if not isinstance(data, dict) or not data.get("ok"):
+        return None
+    try:
+        account_id = int(data.get("account_id"))
+    except Exception:
+        return None
+    payload = _bytes_from_hex(data.get("login_payload_hex"))
+    aes_ak = _bytes_from_hex(data.get("aes_ak_hex"))
+    iv_i = _bytes_from_hex(data.get("iv_i_hex"))
+    if not payload or not aes_ak or not iv_i or not data.get("token"):
+        return None
+    return {
+        "account_id": account_id,
+        "nickname": data.get("nickname") or f"Player_{account_id}",
+        "region": data.get("region") or "BD",
+        "level": int(data.get("level") or 1),
+        "exp": int(data.get("exp") or 0),
+        "likes": int(data.get("likes") or 0),
+        "open_id": data.get("open_id") or "",
+        "access_token": data.get("access_token") or "",
+        "platform": str(data.get("platform") or "4"),
+        "token": data.get("token") or "",
+        "server_time": int(data.get("server_time") or 0),
+        "aes_ak": aes_ak,
+        "iv_i": iv_i,
+        "functional_addrs": data.get("functional_addrs") or "",
+        "informational_addrs": data.get("informational_addrs") or "",
+        "release_version": data.get("release_version") or "",
+        "client_version": data.get("client_version") or "",
+        "server_url": data.get("server_url") or "",
+        "login_payload_data": payload,
+    }
+
+
+async def _call_login_api(path: str, body: Dict) -> Optional[Dict]:
+    try:
+        resp = await client.post(f"{LOGIN_API}{path}", json=body, timeout=60)
+        if resp.status_code != 200:
+            print_error(f"login api {resp.status_code}: {resp.text[:180]}")
+            return None
+        return _session_from_login_api(resp.json())
+    except Exception as e:
+        print_error(f"login api error: {e}")
+        return None
+
+
+async def refresh_account_profile(account_data_or_uid: Any):
+    try:
+        if isinstance(account_data_or_uid, str):
+            uid = str(account_data_or_uid)
+            account_data = bot_state.account_credentials.get(uid)
+        else:
+            account_data = account_data_or_uid
+            uid = str(account_data.get('account_id'))
+
+        if not account_data:
+            return
+
+        url = account_data.get('server_url')
+        token = account_data.get('token')
+        release_version = account_data.get('release_version')
+        payload = account_data.get('login_payload_data')
+
+        if not (url and token and release_version and payload):
+            return
+        if not isinstance(payload, (bytes, bytearray)):
+            return
+
+        resp = await client.post(
+            f"{LOGIN_API}/login/refresh",
+            json={
+                "server_url": url,
+                "token": token,
+                "release_version": release_version,
+                "login_payload_hex": bytes(payload).hex(),
+            },
+            timeout=30,
+        )
+        if resp.status_code != 200:
+            return
+        info = resp.json()
+        if not info.get("ok"):
+            return
+        level = int(info.get("level") or 1)
+        exp = int(info.get("exp") or 0)
+        likes = int(info.get("likes") or 0)
+        nickname = info.get("nickname") or ""
+
+        real_acc_id = str(account_data['account_id'])
+        
+
+        # 🔥 Update ALL possible keys this account is stored under
+        keys_to_update = {real_acc_id}
+        
+        # Add user_input_uid
+        auth_uid = account_data.get('auth_uid')
+        if auth_uid:
+            keys_to_update.add(str(auth_uid))
+        
+        # Add token prefix
+        auth_token = account_data.get('auth_token')
+        if auth_token:
+            keys_to_update.add(f"tok_{auth_token[:20]}")
+            keys_to_update.add(str(auth_token[:20]))
+        
+        # Find all bot_state entries for this account (by matching actual_uid)
+        for bot_key, bot_acc in list(bot_state.accounts.items()):
+            if str(bot_acc.get("actual_uid", "")) == real_acc_id:
+                keys_to_update.add(str(bot_key))
+            if str(bot_key) == real_acc_id:
+                keys_to_update.add(real_acc_id)
+
+        # Update exp on ALL matching keys
+        for key in keys_to_update:
+            if key and key in bot_state.accounts:
+                acc = bot_state.accounts[key]
+                old_exp = acc.get("current_exp", 0)
+                acc["current_exp"] = exp
+                if level > 0:
+                    acc["level"] = level
+                acc["gained_exp"] = max(0, exp - acc.get("initial_exp", exp))
+                acc["last_updated"] = time.strftime("%H:%M:%S")
+                if nickname:
+                    acc["nickname"] = nickname
+                if likes:
+                    acc["likes"] = likes
+                
+                if exp > old_exp:
+                    print_success(f"[EXP-REFRESH] UID {real_acc_id} -> +{exp - old_exp} EXP (total: {exp})")
+
+        # Also update via bot_state.update_exp for the real ID (for logging)
+        if exp > 0:
+            bot_state.update_exp(real_acc_id, exp, level)
+
+        print_info(f"[EXP-REFRESH] UID {real_acc_id} -> Level: {level}, EXP: {exp}")
+    except Exception as e:
+        print_error(f"refresh_account_profile error: {e}")
+
 async def refresh_account_profile(account_data_or_uid: Any):
     try:
         if isinstance(account_data_or_uid, str):
@@ -1884,82 +2062,45 @@ async def refresh_account_profile(account_data_or_uid: Any):
 async def process_account_uid_pass(uid: str, password: str) -> Optional[Dict]:
     cached = cache_get(uid)
     if cached:
+        print_success(f"[CACHE HIT] UID {uid} loaded from token_cache.json")
         acc_id = str(cached['account_id'])
-        nick = cached.get('nickname', f"Player_{acc_id}")
-        lvl = cached.get('level', 1)
-        exp_val = cached.get('exp', 0)
-        print_success(f"[✓] Online (Cache): UID {acc_id} | {nick} | Lvl {lvl} | EXP: {exp_val:,}")
         bot_state.register_account(
             uid=acc_id,
-            nickname=nick,
+            nickname=cached.get('nickname', f"Player_{acc_id}"),
             region=cached.get('region', 'BD'),
-            level=lvl,
-            exp=exp_val,
-            likes=cached.get('likes', 0),
-            auth_uid=str(uid)
+            level=cached.get('level', 1),
+            exp=cached.get('exp', 0),
+            likes=cached.get('likes', 0)
         )
+        # Link user-input UID to actual account_id for dashboard display
+        _link_user_uid_to_actual(str(uid), acc_id)
         _register_credentials(cached)
         return cached
 
-    print_info(f"[LOGIN] Authenticating UID: {uid}...")
-
+    print_info(f"[LOGIN] Full login for UID {uid}...")
     try:
-        async with _LOGIN_SEMAPHORE:
-            verconfig_res = await version_config()
-            if verconfig_res is None:
-                return None
-            release_version, client_version, server_url = verconfig_res
+        session = await _call_login_api("/login/guest", {"uid": str(uid), "password": password})
+        if not session:
+            return None
 
-            tokengrant_response = await get_access_token(uid, password)
-            if tokengrant_response is None:
-                return None
-            open_id, access_token, platform = tokengrant_response
+        acc_id = str(session["account_id"])
+        bot_state.register_account(
+            uid=acc_id,
+            nickname=session.get("nickname", f"Player_{acc_id}"),
+            region=session.get("region", "BD"),
+            level=session.get("level", 1),
+            exp=session.get("exp", 0),
+            likes=session.get("likes", 0),
+            
+        )
+        _link_user_uid_to_actual(str(uid), acc_id)
 
-            device_info = get_device_for_account(uid)
-
-            login_payload_data = await build_majorlogin_payload(open_id, access_token, platform, client_version, device_info)
-            majorlogin_response = await send_majorlogin(login_payload_data, release_version, server_url)
-            if majorlogin_response is None:
-                return None
-            getlogin_result = await send_getlogin(login_payload_data, majorlogin_response.url, majorlogin_response.token, release_version)
-            if getlogin_result is None:
-                return None
-            res_proto, dict_res = getlogin_result
-
-        acc_id = str(majorlogin_response.account_id)
-        level = int(get_proto_field(dict_res, 6, 1))
-        exp = int(get_proto_field(dict_res, 7, 0))
-        likes = int(get_proto_field(dict_res, 8, 0))
-        nickname = res_proto.nickname or get_proto_field(dict_res, 4, f"Player_{acc_id}")
-        region = majorlogin_response.region or get_proto_field(dict_res, 3, "BD")
-
-        bot_state.register_account(uid=acc_id, nickname=nickname, region=region, level=level, exp=exp, likes=likes, auth_uid=str(uid))
-        print_success(f"[✓] Login Success: UID {acc_id} | {nickname} | Lvl {level} | EXP: {exp:,}")
-
-        account_data = {
-            'account_id': majorlogin_response.account_id,
-            'nickname': nickname,
-            'region': region,
-            'level': level,
-            'exp': exp,
-            'likes': likes,
-            'open_id': open_id,
-            'access_token': access_token,
-            'platform': str(platform),
-            'token': majorlogin_response.token,
-            'server_time': majorlogin_response.server_time,
-            'aes_ak': majorlogin_response.aes_ak,
-            'iv_i': majorlogin_response.iv_i,
-            'functional_addrs': res_proto.functional_addrs or get_proto_field(dict_res, 14),
-            'informational_addrs': res_proto.informational_addrs or get_proto_field(dict_res, 32),
-            'release_version': release_version,
-            'client_version': client_version,
-            'server_url': majorlogin_response.url,
-            'login_payload_data': login_payload_data,
-            'auth_type': 'guest',
-            'auth_uid': uid,
-            'auth_password': password
-        }
+        account_data = dict(session)
+        account_data.update({
+            "auth_type": "guest",
+            "auth_uid": uid,
+            "auth_password": password,
+        })
         _register_credentials(account_data)
         cache_set(uid, account_data)
         return account_data
@@ -1967,119 +2108,54 @@ async def process_account_uid_pass(uid: str, password: str) -> Optional[Dict]:
         print_error(f"process_account_uid_pass error: {e}")
         return None
 
-
 async def process_account_token(access_token: str) -> Optional[Dict]:
     cache_key = f"tok_{access_token[:20]}"
     cached = cache_get(cache_key)
     if cached:
+        print_success(f"[CACHE HIT] Token {access_token[:10]}... loaded from cache")
         acc_id = str(cached['account_id'])
-        nick = cached.get('nickname', f"Player_{acc_id}")
-        lvl = cached.get('level', 1)
-        exp_val = cached.get('exp', 0)
-        print_success(f"[✓] Online (Token Cache): UID {acc_id} | {nick} | Lvl {lvl} | EXP: {exp_val:,}")
         bot_state.register_account(
             uid=acc_id,
-            nickname=nick,
+            nickname=cached.get('nickname', f"Player_{acc_id}"),
             region=cached.get('region', 'BD'),
-            level=lvl,
-            exp=exp_val,
-            likes=cached.get('likes', 0),
-            token=access_token
+            level=cached.get('level', 1),
+            exp=cached.get('exp', 0),
+            likes=cached.get('likes', 0)
         )
+        # Link token prefix to actual account_id for dashboard display
+        _link_user_uid_to_actual(str(access_token[:20]), acc_id)
         _register_credentials(cached)
         return cached
 
     print_info("[LOGIN] Full login with Access Token...")
     try:
-        async with _LOGIN_SEMAPHORE:
-            verconfig_res = await version_config()
-            if verconfig_res is None:
-                return None
-            release_version, client_version, server_url = verconfig_res
+        session = await _call_login_api("/login/token", {"access_token": access_token})
+        if not session:
+            return None
 
-            url = f"https://100067.connect.garena.com/oauth/token/inspect?token={access_token}"
-            hdrs = {
-                "Accept-Encoding": "gzip, deflate, br",
-                "Connection": "close",
-                "Content-Type": "application/x-www-form-urlencoded",
-                "Host": "100067.connect.garena.com",
-                "User-Agent": "GarenaMSDK/4.0.19P4(G011A ;Android 9;en;US;)"
-            }
-            resp = await client.get(url, headers=hdrs, timeout=10.0)
-            if resp.status_code != 200:
-                return None
-            data = resp.json()
+        acc_id = str(session["account_id"])
+        bot_state.register_account(
+            uid=acc_id,
+            nickname=session.get("nickname", f"Player_{acc_id}"),
+            region=session.get("region", "BD"),
+            level=session.get("level", 1),
+            exp=session.get("exp", 0),
+            likes=session.get("likes", 0),
+            
+        )
+        _link_user_uid_to_actual(str(access_token[:20]), acc_id)
 
-            if 'error' in data:
-                return None
-
-            open_id = data.get('open_id')
-            platform = data.get('platform', 4)
-
-            if not open_id:
-                return None
-
-            device_info = get_device_for_account(open_id)
-
-            login_payload_data = await build_majorlogin_payload(open_id, access_token, str(platform), client_version, device_info)
-            if not login_payload_data:
-                return None
-
-            majorlogin_response = await send_majorlogin(login_payload_data, release_version, server_url)
-            if majorlogin_response is None:
-                return None
-
-            getlogin_result = await send_getlogin(
-                login_payload_data,
-                majorlogin_response.url,
-                majorlogin_response.token,
-                release_version
-            )
-            if getlogin_result is None:
-                return None
-
-            res_proto, dict_res = getlogin_result
-        acc_id = str(majorlogin_response.account_id)
-        level = int(get_proto_field(dict_res, 6, 1))
-        exp = int(get_proto_field(dict_res, 7, 0))
-        likes = int(get_proto_field(dict_res, 8, 0))
-        nickname = res_proto.nickname or get_proto_field(dict_res, 4, f"Player_{acc_id}")
-        region = majorlogin_response.region or get_proto_field(dict_res, 3, "BD")
-
-        bot_state.register_account(uid=acc_id, nickname=nickname, region=region, level=level, exp=exp, likes=likes, token=access_token)
-        print_success(f"[✓] Login Success (Token): UID {acc_id} | {nickname} | Lvl {level} | EXP: {exp:,}")
-
-        account_data = {
-            'account_id': majorlogin_response.account_id,
-            'nickname': nickname,
-            'region': region,
-            'level': level,
-            'exp': exp,
-            'likes': likes,
-            'open_id': open_id,
-            'access_token': access_token,
-            'platform': str(platform),
-            'token': majorlogin_response.token,
-            'server_time': majorlogin_response.server_time,
-            'aes_ak': majorlogin_response.aes_ak,
-            'iv_i': majorlogin_response.iv_i,
-            'functional_addrs': res_proto.functional_addrs or get_proto_field(dict_res, 14),
-            'informational_addrs': res_proto.informational_addrs or get_proto_field(dict_res, 32),
-            'release_version': release_version,
-            'client_version': client_version,
-            'server_url': majorlogin_response.url,
-            'login_payload_data': login_payload_data,
-            'platform': platform,
-            'auth_type': 'token',
-            'auth_token': access_token
-        }
+        account_data = dict(session)
+        account_data.update({
+            "auth_type": "token",
+            "auth_token": access_token,
+        })
         _register_credentials(account_data)
         cache_set(cache_key, account_data)
         return account_data
     except Exception as e:
         print_error(f"process_account_token error: {e}")
         return None
-
 
 async def run_account_worker(account_data: Dict, label: str):
     acc_id = str(account_data['account_id'])
@@ -2227,34 +2303,6 @@ async def account_loop_token(token: str):
 
 
 # ==================== ACCOUNTS LOADER ====================
-def sync_user_account_owners():
-    """Load persistent customer ownership into dashboard state before workers start."""
-    users_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "users.json")
-    if not os.path.exists(users_file):
-        return
-    try:
-        with open(users_file, "r", encoding="utf-8") as f:
-            users = json.load(f)
-        if not isinstance(users, dict):
-            return
-        for username, user in users.items():
-            owner = str(username).strip()
-            if not owner or not isinstance(user, dict):
-                continue
-            for acc in user.get("accounts", []) or []:
-                if not isinstance(acc, dict):
-                    continue
-                uid = str(acc.get("uid") or "").strip()
-                token = str(acc.get("token") or "").strip()
-                if uid:
-                    bot_state.pending_account_owners[uid] = owner
-                if token:
-                    bot_state.pending_account_owners[token] = owner
-                    bot_state.pending_account_owners[token[:20]] = owner
-    except Exception as e:
-        print_warning(f"Could not sync customer account ownership: {e}")
-
-
 def load_accounts():
     accounts = []
     if os.path.exists(ACCOUNTS_FILE):
@@ -2297,26 +2345,6 @@ async def main():
             p = str(data["password"]).strip()
             task = asyncio.create_task(account_loop_guest(u, p))
             bot_state.account_workers[u] = task
-
-    async def on_user_account_added_handler(username, data):
-        """Start a customer account and bind its eventual game UID to the customer."""
-        owner = str(username).strip()
-        if not owner:
-            return
-
-        # register_account() will consume this mapping after login resolves
-        # the real in-game UID.
-        if data.get("token"):
-            token = str(data["token"]).strip()
-            if token:
-                bot_state.pending_account_owners[token] = owner
-                bot_state.pending_account_owners[token[:20]] = owner
-        elif data.get("uid"):
-            auth_uid = str(data["uid"]).strip()
-            if auth_uid:
-                bot_state.pending_account_owners[auth_uid] = owner
-
-        await on_account_added_handler(data)
 
     async def on_refresh_account_handler(uid):
         await refresh_account_profile(uid)
@@ -2361,14 +2389,12 @@ async def main():
             bot_state.close_writers_for_account(str(uid))
 
     bot_state.refresh_callbacks["on_account_added"] = on_account_added_handler
-    bot_state.refresh_callbacks["on_user_account_added"] = on_user_account_added_handler
     bot_state.refresh_callbacks["on_account_deleted"] = on_account_deleted_handler
     bot_state.refresh_callbacks["on_refresh_account"] = on_refresh_account_handler
     bot_state.refresh_callbacks["on_restart_account"] = on_restart_account_handler
     bot_state.refresh_callbacks["on_pause_toggle"] = on_pause_toggle_handler
 
     sync_devices_with_accounts()
-    sync_user_account_owners()
 
     accounts = load_accounts()
 

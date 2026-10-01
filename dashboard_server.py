@@ -169,10 +169,6 @@ class BotState:
         self.account_credentials: Dict[str, Dict[str, Any]] = {}
         self.active_writers: Dict[str, set] = {}
         self.account_links: Dict[str, str] = {}          # legacy alias
-        # Maps user-supplied account identifiers to the dashboard customer.
-        # Main.py uses the identifier during login, then register_account()
-        # carries the owner onto the real in-game account ID.
-        self.pending_account_owners: Dict[str, str] = {}
 
     # ---------- writers ----------
     def register_writer(self, uid: str, writer):
@@ -226,17 +222,6 @@ class BotState:
                          owner: Optional[str] = None):
         uid_str = str(uid)
         auth_uid_str = str(auth_uid) if auth_uid else self.game_to_auth_id.get(uid_str, "")
-
-        # Resolve the customer owner before the real game UID is known.
-        # Guest login uses auth_uid; token login uses the access token.
-        resolved_owner = owner
-        owner_candidates = [uid_str, auth_uid_str, str(token or ""), str(token or "")[:20]]
-        if not resolved_owner:
-            for candidate in owner_candidates:
-                if candidate and candidate in self.pending_account_owners:
-                    resolved_owner = self.pending_account_owners.get(candidate)
-                    break
-
         if auth_uid_str:
             self.auth_to_game_id[auth_uid_str] = uid_str
             self.game_to_auth_id[uid_str] = auth_uid_str
@@ -280,7 +265,7 @@ class BotState:
                 "is_paused": self.is_paused(uid_str),
                 "paused_at": time.time() if self.is_paused(uid_str) else None,
                 "total_pause_duration": 0.0,
-                "owner": resolved_owner,
+                "owner": owner,
                 "added_at": time.time(),
             }
         else:
@@ -307,8 +292,8 @@ class BotState:
             if not acc.get("is_paused"):
                 acc["status"] = "ONLINE"
             acc["last_updated"] = time.strftime("%H:%M:%S")
-            if resolved_owner:
-                acc["owner"] = resolved_owner
+            if owner:
+                acc["owner"] = owner
 
         self.recalc_totals()
 
@@ -627,9 +612,15 @@ async def api_submit_payment(request: web.Request) -> web.Response:
                 fields[part.name] = (await part.text()).strip()
 
         plan = fields.get("plan", "")
+        username = str(fields.get("username", "")).strip()
         cfg = _payment_config()
         if plan not in cfg["plans"]:
             return _json_error("Invalid plan", 400)
+        if not username:
+            return _json_error("Panel username is required", 400)
+        user = await get_user(username)
+        if not user:
+            return _json_error("Panel username not found", 400)
         if not fields.get("customer_name") or not fields.get("contact") or not fields.get("utr"):
             return _json_error("Name, contact and UTR are required", 400)
         if not screenshot_name:
@@ -639,14 +630,19 @@ async def api_submit_payment(request: web.Request) -> web.Response:
         req = {
             "id": secrets.token_hex(8),
             "created_at": int(time.time()),
+            "username": username,
             "customer_name": fields["customer_name"][:100],
             "contact": fields["contact"][:100],
             "utr": fields["utr"][:100],
             "plan": plan,
             "amount": item["price"],
+            "days": int(item.get("days", 1)),
+            "accounts": int(item.get("accounts", 1)),
             "screenshot": screenshot_name,
             "status": "pending",
             "active": True,
+            "notification": "Payment submitted. Waiting for admin verification.",
+            "notification_at": int(time.time()),
         }
         items = _payment_requests()
         items.insert(0, req)
@@ -737,13 +733,20 @@ async def api_admin_payment_action(request: web.Request) -> web.Response:
                 break
         if not found:
             return _json_error("Payment request not found", 404)
+        now = int(time.time())
         if action == "verify":
             found["status"] = "verified"
-            found["verified_at"] = int(time.time())
+            found["verified_at"] = now
             found["active"] = True
+            found["notification"] = f"Payment accepted for {found.get('plan', 'plan')}. Your purchase has been verified."
+            found["notification_type"] = "success"
+            found["notification_at"] = now
         elif action == "reject":
             found["status"] = "rejected"
             found["active"] = False
+            found["notification"] = f"Payment request for {found.get('plan', 'plan')} was rejected. Please contact support."
+            found["notification_type"] = "error"
+            found["notification_at"] = now
         elif action == "activate":
             found["active"] = True
         elif action == "deactivate":
@@ -1021,6 +1024,19 @@ def _build_user_accounts(username: str, user: Dict[str, Any]) -> List[Dict[str, 
     return result_accounts
 
 
+async def api_user_payment_requests(request: web.Request) -> web.Response:
+    err = await _require_user(request)
+    if err: return err
+    try:
+        sess = await get_session(_get_sid(request))
+        username = sess["username"]
+        requests = [x for x in _payment_requests() if str(x.get("username", "")) == username]
+        requests.sort(key=lambda x: x.get("created_at", 0), reverse=True)
+        return web.json_response({"status": "ok", "requests": requests[:20]})
+    except Exception as e:
+        return _json_error(str(e), 500)
+
+
 async def api_user_stats(request: web.Request) -> web.Response:
     err = await _require_user(request)
     if err: return err
@@ -1098,11 +1114,10 @@ async def api_user_add_account(request: web.Request) -> web.Response:
         cb = bot_state.refresh_callbacks.get("on_user_account_added")
         if cb:
             asyncio.create_task(cb(username, payload))
-        else:
-            # Legacy/global flow for deployments without per-user ownership.
-            cb2 = bot_state.refresh_callbacks.get("on_account_added")
-            if cb2:
-                asyncio.create_task(cb2(payload))
+        # legacy name
+        cb2 = bot_state.refresh_callbacks.get("on_account_added")
+        if cb2:
+            asyncio.create_task(cb2(payload))
         return web.json_response({"status": "ok"})
     except Exception as e:
         return _json_error(str(e), 500)
@@ -1276,6 +1291,7 @@ async def start_web_dashboard(host: str = "0.0.0.0", port: int = 20331):
     app.router.add_post("/api/user/add-account", api_user_add_account)
     app.router.add_post("/api/user/remove-account", api_user_remove_account)
     app.router.add_post("/api/user/refresh", api_user_refresh)
+    app.router.add_get("/api/user/payment-requests", api_user_payment_requests)
 
     # public
     app.router.add_get("/api/public/popup", api_public_popup)
