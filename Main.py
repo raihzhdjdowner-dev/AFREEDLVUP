@@ -2227,6 +2227,34 @@ async def account_loop_token(token: str):
 
 
 # ==================== ACCOUNTS LOADER ====================
+def sync_user_account_owners():
+    """Load persistent customer ownership into dashboard state before workers start."""
+    users_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "users.json")
+    if not os.path.exists(users_file):
+        return
+    try:
+        with open(users_file, "r", encoding="utf-8") as f:
+            users = json.load(f)
+        if not isinstance(users, dict):
+            return
+        for username, user in users.items():
+            owner = str(username).strip()
+            if not owner or not isinstance(user, dict):
+                continue
+            for acc in user.get("accounts", []) or []:
+                if not isinstance(acc, dict):
+                    continue
+                uid = str(acc.get("uid") or "").strip()
+                token = str(acc.get("token") or "").strip()
+                if uid:
+                    bot_state.pending_account_owners[uid] = owner
+                if token:
+                    bot_state.pending_account_owners[token] = owner
+                    bot_state.pending_account_owners[token[:20]] = owner
+    except Exception as e:
+        print_warning(f"Could not sync customer account ownership: {e}")
+
+
 def load_accounts():
     accounts = []
     if os.path.exists(ACCOUNTS_FILE):
@@ -2269,6 +2297,26 @@ async def main():
             p = str(data["password"]).strip()
             task = asyncio.create_task(account_loop_guest(u, p))
             bot_state.account_workers[u] = task
+
+    async def on_user_account_added_handler(username, data):
+        """Start a customer account and bind its eventual game UID to the customer."""
+        owner = str(username).strip()
+        if not owner:
+            return
+
+        # register_account() will consume this mapping after login resolves
+        # the real in-game UID.
+        if data.get("token"):
+            token = str(data["token"]).strip()
+            if token:
+                bot_state.pending_account_owners[token] = owner
+                bot_state.pending_account_owners[token[:20]] = owner
+        elif data.get("uid"):
+            auth_uid = str(data["uid"]).strip()
+            if auth_uid:
+                bot_state.pending_account_owners[auth_uid] = owner
+
+        await on_account_added_handler(data)
 
     async def on_refresh_account_handler(uid):
         await refresh_account_profile(uid)
@@ -2313,12 +2361,14 @@ async def main():
             bot_state.close_writers_for_account(str(uid))
 
     bot_state.refresh_callbacks["on_account_added"] = on_account_added_handler
+    bot_state.refresh_callbacks["on_user_account_added"] = on_user_account_added_handler
     bot_state.refresh_callbacks["on_account_deleted"] = on_account_deleted_handler
     bot_state.refresh_callbacks["on_refresh_account"] = on_refresh_account_handler
     bot_state.refresh_callbacks["on_restart_account"] = on_restart_account_handler
     bot_state.refresh_callbacks["on_pause_toggle"] = on_pause_toggle_handler
 
     sync_devices_with_accounts()
+    sync_user_account_owners()
 
     accounts = load_accounts()
 

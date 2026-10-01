@@ -169,6 +169,10 @@ class BotState:
         self.account_credentials: Dict[str, Dict[str, Any]] = {}
         self.active_writers: Dict[str, set] = {}
         self.account_links: Dict[str, str] = {}          # legacy alias
+        # Maps user-supplied account identifiers to the dashboard customer.
+        # Main.py uses the identifier during login, then register_account()
+        # carries the owner onto the real in-game account ID.
+        self.pending_account_owners: Dict[str, str] = {}
 
     # ---------- writers ----------
     def register_writer(self, uid: str, writer):
@@ -222,6 +226,17 @@ class BotState:
                          owner: Optional[str] = None):
         uid_str = str(uid)
         auth_uid_str = str(auth_uid) if auth_uid else self.game_to_auth_id.get(uid_str, "")
+
+        # Resolve the customer owner before the real game UID is known.
+        # Guest login uses auth_uid; token login uses the access token.
+        resolved_owner = owner
+        owner_candidates = [uid_str, auth_uid_str, str(token or ""), str(token or "")[:20]]
+        if not resolved_owner:
+            for candidate in owner_candidates:
+                if candidate and candidate in self.pending_account_owners:
+                    resolved_owner = self.pending_account_owners.get(candidate)
+                    break
+
         if auth_uid_str:
             self.auth_to_game_id[auth_uid_str] = uid_str
             self.game_to_auth_id[uid_str] = auth_uid_str
@@ -265,7 +280,7 @@ class BotState:
                 "is_paused": self.is_paused(uid_str),
                 "paused_at": time.time() if self.is_paused(uid_str) else None,
                 "total_pause_duration": 0.0,
-                "owner": owner,
+                "owner": resolved_owner,
                 "added_at": time.time(),
             }
         else:
@@ -292,8 +307,8 @@ class BotState:
             if not acc.get("is_paused"):
                 acc["status"] = "ONLINE"
             acc["last_updated"] = time.strftime("%H:%M:%S")
-            if owner:
-                acc["owner"] = owner
+            if resolved_owner:
+                acc["owner"] = resolved_owner
 
         self.recalc_totals()
 
@@ -1083,10 +1098,11 @@ async def api_user_add_account(request: web.Request) -> web.Response:
         cb = bot_state.refresh_callbacks.get("on_user_account_added")
         if cb:
             asyncio.create_task(cb(username, payload))
-        # legacy name
-        cb2 = bot_state.refresh_callbacks.get("on_account_added")
-        if cb2:
-            asyncio.create_task(cb2(payload))
+        else:
+            # Legacy/global flow for deployments without per-user ownership.
+            cb2 = bot_state.refresh_callbacks.get("on_account_added")
+            if cb2:
+                asyncio.create_task(cb2(payload))
         return web.json_response({"status": "ok"})
     except Exception as e:
         return _json_error(str(e), 500)
