@@ -1,0 +1,6 @@
+httpx
+pycryptodome
+protobuf-decoder
+protobuf
+requests
+aiohttp
