@@ -557,7 +557,7 @@ input:focus,select:focus,textarea:focus{border-color:var(--af-pink)!important;bo
                 </div>
             </div>
             <div style="display:flex; gap:10px;">
-                <button class="btn btn-secondary" onclick="loadUsers(); loadPopup();">
+                <button class="btn btn-secondary" onclick="loadUsers(); loadPopup(); loadControlSettings();">
                     <i class="fa-solid fa-rotate"></i> Refresh
                 </button>
                 <button class="btn btn-danger" onclick="logout()">
@@ -665,6 +665,19 @@ input:focus,select:focus,textarea:focus{border-color:var(--af-pink)!important;bo
                     </div>
                 </div>
             </div>
+        </div>
+
+        <!-- ==================== RUNTIME CONTROL ==================== -->
+        <div class="card-box" style="margin-top:24px;">
+            <div class="box-title"><i class="fa-solid fa-sliders"></i><span>Runtime Control</span></div>
+            <div class="row-2">
+                <div class="form-group"><label>Concurrent Matches Per Account</label><input type="number" class="form-input" id="max-concurrent-matches" min="1" max="20" value="1"><small style="display:block;color:#8e9bb5;margin-top:6px">1 = sequential. 2–20 = running matches stay in background while the next match starts.</small></div>
+                <div class="form-group"><label>Customer Site</label><select class="form-select" id="maintenance-enabled"><option value="false">ON — Customers can use the site</option><option value="true">OFF — UNDER MAINTENANCE</option></select><small style="display:block;color:#8e9bb5;margin-top:6px">OFF blocks customer pages and APIs immediately. Admin stays accessible.</small></div>
+            </div>
+            <div class="form-group"><label>Maintenance Title</label><input type="text" class="form-input" id="maintenance-title" value="UNDER MAINTENANCE"></div>
+            <div class="form-group"><label>Maintenance Message</label><textarea class="form-textarea" id="maintenance-message" rows="3">Service is temporarily unavailable. Please try again shortly.</textarea></div>
+            <div class="alert alert-success" id="control-alert-success"></div><div class="alert alert-error" id="control-alert-error"></div>
+            <button class="btn btn-primary" type="button" onclick="saveControlSettings()" style="width:100%"><i class="fa-solid fa-floppy-disk"></i> Save Runtime Control</button>
         </div>
 
         <!-- ==================== POPUP SETTINGS ==================== -->
@@ -1026,6 +1039,10 @@ input:focus,select:focus,textarea:focus{border-color:var(--af-pink)!important;bo
             }
         }
 
+        // ============ RUNTIME CONTROL ============
+        async function loadControlSettings(){try{const r=await fetch('/api/admin/control-settings',{credentials:'same-origin',cache:'no-store'});if(r.status===401)return;const d=await r.json();if(d.status==='ok'&&d.control){const c=d.control;document.getElementById('max-concurrent-matches').value=c.max_concurrent_matches||1;document.getElementById('maintenance-enabled').value=c.maintenance?'true':'false';document.getElementById('maintenance-title').value=c.maintenance_title||'UNDER MAINTENANCE';document.getElementById('maintenance-message').value=c.maintenance_message||'';}}catch(e){console.error(e)}}
+        async function saveControlSettings(){const ok=document.getElementById('control-alert-success'),er=document.getElementById('control-alert-error');ok.classList.remove('show');er.classList.remove('show');const p={max_concurrent_matches:Number(document.getElementById('max-concurrent-matches').value||1),maintenance:document.getElementById('maintenance-enabled').value==='true',maintenance_title:document.getElementById('maintenance-title').value,maintenance_message:document.getElementById('maintenance-message').value};try{const r=await fetch('/api/admin/control-settings',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify(p)});const d=await r.json();if(d.status==='ok'){ok.textContent=p.maintenance?'✓ Site is UNDER MAINTENANCE. Customer access is blocked.':'✓ Runtime control saved. Customer site is ON.';ok.classList.add('show');setTimeout(()=>ok.classList.remove('show'),4000)}else{er.textContent=d.error||'Save failed';er.classList.add('show')}}catch(e){er.textContent='Connection error: '+e.message;er.classList.add('show')}}
+
         // ============ POPUP SETTINGS ============
         async function loadPopup() {
             try {
@@ -1107,7 +1124,9 @@ input:focus,select:focus,textarea:focus{border-color:var(--af-pink)!important;bo
 
         loadUsers();
         loadPopup();
+        loadControlSettings();
         setInterval(loadUsers, 10000);
+        setInterval(loadControlSettings, 10000);
     </script>
 
 <!-- UPI PAYMENT MANAGEMENT — added without changing existing admin sections -->

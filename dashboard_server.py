@@ -168,7 +168,16 @@ class BotState:
         self.refresh_callbacks: Dict[str, Any] = {}
         self.account_credentials: Dict[str, Dict[str, Any]] = {}
         self.active_writers: Dict[str, set] = {}
+        self.active_match_tasks: Dict[str, set] = {}
         self.account_links: Dict[str, str] = {}          # legacy alias
+        self.max_concurrent_matches = _load_control_config().get("max_concurrent_matches", 1)
+
+    def get_max_concurrent_matches(self) -> int:
+        try:
+            self.max_concurrent_matches=max(1,min(20,int(_load_control_config().get("max_concurrent_matches",self.max_concurrent_matches))))
+        except Exception:
+            self.max_concurrent_matches=max(1,int(self.max_concurrent_matches or 1))
+        return self.max_concurrent_matches
 
     # ---------- writers ----------
     def register_writer(self, uid: str, writer):
@@ -203,6 +212,92 @@ class BotState:
                 except Exception:
                     pass
             self.active_writers.pop(c, None)
+
+    def _runtime_candidates(self, uid: str):
+        uid_str = str(uid)
+        candidates = {uid_str}
+        if uid_str in self.auth_to_game_id:
+            candidates.add(str(self.auth_to_game_id[uid_str]))
+        if uid_str in self.game_to_auth_id:
+            candidates.add(str(self.game_to_auth_id[uid_str]))
+        mapped = self.account_token_map.get(uid_str)
+        if mapped:
+            candidates.add(str(mapped))
+            candidates.add(str(mapped)[:16])
+        for c in list(candidates):
+            mapped2 = self.account_token_map.get(c)
+            if mapped2:
+                candidates.add(str(mapped2))
+                candidates.add(str(mapped2)[:16])
+        return {str(c) for c in candidates if c}
+
+    def register_match_task(self, uid: str, task):
+        for c in self._runtime_candidates(uid):
+            self.active_match_tasks.setdefault(c, set()).add(task)
+
+        def _done(_task):
+            for c in self._runtime_candidates(uid):
+                bucket = self.active_match_tasks.get(c)
+                if bucket:
+                    bucket.discard(_task)
+                    if not bucket:
+                        self.active_match_tasks.pop(c, None)
+
+        try:
+            task.add_done_callback(_done)
+        except Exception:
+            pass
+
+    def cancel_match_tasks(self, uid: str):
+        tasks = set()
+        for c in self._runtime_candidates(uid):
+            tasks.update(self.active_match_tasks.get(c, set()))
+        for task in tasks:
+            try:
+                if task and not task.done():
+                    task.cancel()
+            except Exception:
+                pass
+        return tasks
+
+    def cancel_account_runtime(self, uid: str):
+        # Hard-stop only this account: UDP match, TCP gateway, and worker/reconnect loop.
+        candidates = self._runtime_candidates(uid)
+        tasks = set()
+        for c in candidates:
+            tasks.update(self.active_match_tasks.get(c, set()))
+        for task in tasks:
+            try:
+                if task and not task.done():
+                    task.cancel()
+            except Exception:
+                pass
+        for c in candidates:
+            for w in list(self.active_writers.get(c, set())):
+                try:
+                    if not hasattr(w, "is_closing") or not w.is_closing():
+                        w.close()
+                except Exception:
+                    pass
+            self.active_writers.pop(c, None)
+
+        worker_tasks = set()
+        for c in candidates:
+            task = self.account_workers.get(c)
+            if task:
+                worker_tasks.add(task)
+        tasks.update(worker_tasks)
+        for task in worker_tasks:
+            try:
+                if task and not task.done():
+                    task.cancel()
+            except Exception:
+                pass
+
+        for key in list(self.account_workers):
+            if str(key) in candidates:
+                self.account_workers.pop(key, None)
+        return tasks
 
     # ---------- logs ----------
     def log(self, message: str, level: str = "info", uid: Optional[str] = None):
@@ -341,7 +436,14 @@ class BotState:
         return int(acc.get("level", 1) or 1) if acc else 1
 
     def get_account_mode(self, uid: str) -> str:
-        return "BR" if self.get_account_level(uid) < 3 else "LONE_WOLF"
+        uid_str = str(uid)
+        acc = self.accounts.get(uid_str)
+        if not acc:
+            mapped = self.game_to_auth_id.get(uid_str) or self.auth_to_game_id.get(uid_str)
+            if mapped:
+                acc = self.accounts.get(str(mapped))
+        mode = str((acc or {}).get("mode", "battle_royal")).lower()
+        return "LONE_WOLF" if mode == "lone_wolf" else "BR"
 
     def update_status(self, uid: str, status: str, active_matches: Optional[int] = None):
         uid_str = str(uid)
@@ -415,6 +517,7 @@ class BotState:
         if is_now_paused:
             for c in candidates:
                 self.paused_accounts.add(c)
+                self.cancel_match_tasks(c)
                 self.close_writers_for_account(c)
             if target_acc:
                 target_acc["is_paused"] = True
@@ -508,6 +611,55 @@ def _json_error(msg: str, status: int = 400) -> web.Response:
 
 
 # ==================== TEMPLATES ====================
+
+# ==================== RUNTIME CONTROL / MAINTENANCE ====================
+CONTROL_CONFIG_FILE = ("/app/data/afreed_control.json" if os.path.isdir("/app/data") else os.path.join(os.path.dirname(os.path.abspath(__file__)), "afreed_control.json"))
+DEFAULT_CONTROL_CONFIG = {"max_concurrent_matches":1,"maintenance":False,"maintenance_title":"UNDER MAINTENANCE","maintenance_message":"Service is temporarily unavailable. Please try again shortly.","updated_at":0}
+
+def _load_control_config() -> Dict[str, Any]:
+    cfg = dict(DEFAULT_CONTROL_CONFIG)
+    try:
+        if os.path.exists(CONTROL_CONFIG_FILE):
+            with open(CONTROL_CONFIG_FILE,"r",encoding="utf-8") as f:
+                saved=json.load(f)
+            if isinstance(saved,dict): cfg.update(saved)
+    except Exception: pass
+    try: cfg["max_concurrent_matches"]=max(1,min(20,int(cfg.get("max_concurrent_matches",1))))
+    except Exception: cfg["max_concurrent_matches"]=1
+    cfg["maintenance"]=bool(cfg.get("maintenance",False))
+    return cfg
+
+def _save_control_config(cfg: Dict[str, Any]):
+    cfg=dict(DEFAULT_CONTROL_CONFIG,**(cfg or {}))
+    cfg["max_concurrent_matches"]=max(1,min(20,int(cfg.get("max_concurrent_matches",1))))
+    cfg["maintenance"]=bool(cfg.get("maintenance",False))
+    cfg["updated_at"]=int(time.time())
+    directory=os.path.dirname(CONTROL_CONFIG_FILE)
+    if directory:
+        try: os.makedirs(directory,exist_ok=True)
+        except Exception: pass
+    tmp=CONTROL_CONFIG_FILE+".tmp"
+    with open(tmp,"w",encoding="utf-8") as f: json.dump(cfg,f,indent=2)
+    os.replace(tmp,CONTROL_CONFIG_FILE)
+    return cfg
+
+def _maintenance_html(cfg: Dict[str, Any]) -> str:
+    title=str(cfg.get("maintenance_title") or "UNDER MAINTENANCE")
+    msg=str(cfg.get("maintenance_message") or "Service is temporarily unavailable.")
+    return ("<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'><title>"+title+"</title>"
+            "<style>html,body{margin:0;min-height:100%;background:#05060b;color:#fff;font-family:Arial,sans-serif}body{display:flex;align-items:center;justify-content:center;padding:24px;text-align:center}.box{max-width:560px;width:100%;padding:42px 28px;border:1px solid #ff336655;border-radius:24px;background:#0c0d15;box-shadow:0 0 60px #ff336622}.ico{font-size:54px;margin-bottom:18px}h1{margin:0 0 12px;font-size:30px}p{color:#aab0c0;line-height:1.7;margin:0}</style></head><body><div class='box'><div class='ico'>🛠️</div><h1>"+title+"</h1><p>"+msg+"</p></div></body></html>")
+
+async def maintenance_middleware(request: web.Request, handler):
+    path=request.path
+    if path.startswith("/admin") or path.startswith("/api/admin") or path=="/api/public/maintenance":
+        return await handler(request)
+    cfg=_load_control_config()
+    if cfg.get("maintenance"):
+        if path.startswith("/api/"):
+            return web.json_response({"status":"maintenance","error":"Under maintenance","title":cfg.get("maintenance_title","UNDER MAINTENANCE"),"message":cfg.get("maintenance_message","Service is temporarily unavailable.")},status=503,headers={"Cache-Control":"no-store"})
+        return web.Response(text=_maintenance_html(cfg),content_type="text/html",charset="utf-8",headers={"Cache-Control":"no-store, no-cache, must-revalidate, max-age=0","Pragma":"no-cache"})
+    return await handler(request)
+
 TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
 
 
@@ -920,6 +1072,25 @@ async def api_admin_extend_user(request: web.Request) -> web.Response:
         return _json_error(str(e), 500)
 
 
+async def api_admin_get_control(request: web.Request) -> web.Response:
+    err=await _require_admin(request)
+    if err: return err
+    return web.json_response({"status":"ok","control":_load_control_config()})
+
+async def api_admin_save_control(request: web.Request) -> web.Response:
+    err=await _require_admin(request)
+    if err: return err
+    try:
+        data=await request.json(); cfg=_load_control_config()
+        if "max_concurrent_matches" in data: cfg["max_concurrent_matches"]=max(1,min(20,int(data["max_concurrent_matches"])))
+        if "maintenance" in data: cfg["maintenance"]=bool(data["maintenance"])
+        if "maintenance_title" in data: cfg["maintenance_title"]=str(data["maintenance_title"])[:100]
+        if "maintenance_message" in data: cfg["maintenance_message"]=str(data["maintenance_message"])[:500]
+        cfg=_save_control_config(cfg); bot_state.max_concurrent_matches=cfg["max_concurrent_matches"]
+        bot_state.log(f"CONTROL updated: concurrent={cfg['max_concurrent_matches']} maintenance={cfg['maintenance']}","warning" if cfg["maintenance"] else "success")
+        return web.json_response({"status":"ok","control":cfg})
+    except Exception as e: return _json_error(str(e),400)
+
 async def api_admin_get_popup(request: web.Request) -> web.Response:
     err = await _require_admin(request)
     if err: return err
@@ -976,6 +1147,7 @@ def _build_user_accounts(username: str, user: Dict[str, Any]) -> List[Dict[str, 
                 merged["display_uid"] = real_uid
                 merged["actual_uid"] = real_uid
                 merged["user_input_uid"] = user_uid
+                merged["mode"] = str(acc.get("mode", bot_acc.get("mode", "battle_royal")))
                 merged["added_at"] = acc.get("added_at", bot_acc.get("added_at", now))
                 break
 
@@ -1000,6 +1172,7 @@ def _build_user_accounts(username: str, user: Dict[str, Any]) -> List[Dict[str, 
                 "last_updated": time.strftime("%H:%M:%S"),
                 "added_at": acc.get("added_at", now),
                 "owner": username,
+                "mode": str(acc.get("mode", "battle_royal")),
                 **{k: prog[k] for k in ("next_level", "remaining_exp", "target_exp",
                                         "needed_for_level", "earned_in_level", "progress_pct")},
             }
@@ -1069,6 +1242,10 @@ async def api_user_add_account(request: web.Request) -> web.Response:
         data = await request.json()
 
         payload = {}
+        mode = str(data.get("mode", "battle_royal")).strip().lower()
+        if mode not in {"battle_royal", "lone_wolf"}:
+            return _json_error("Invalid game mode")
+        payload["mode"] = mode
         if data.get("token"):
             payload["token"] = str(data["token"]).strip()
         elif data.get("uid") and data.get("password"):
@@ -1136,6 +1313,22 @@ async def api_user_remove_account(request: web.Request) -> web.Response:
                 break
         if not removed:
             return _json_error("Account not found")
+
+        # Hard-stop this account: cancel UDP match, TCP gateway, and worker/reconnect loop.
+        runtime_tasks = bot_state.cancel_account_runtime(acc_id)
+        if runtime_tasks:
+            await asyncio.gather(*runtime_tasks, return_exceptions=True)
+
+        runtime_keys = bot_state._runtime_candidates(acc_id)
+        bot_state.paused_accounts.difference_update(runtime_keys)
+        for k in runtime_keys:
+            bot_state.account_token_map.pop(str(k), None)
+        for k in list(bot_state.auth_to_game_id):
+            if str(k) in runtime_keys or str(bot_state.auth_to_game_id.get(k)) in runtime_keys:
+                bot_state.auth_to_game_id.pop(k, None)
+        for k in list(bot_state.game_to_auth_id):
+            if str(k) in runtime_keys or str(bot_state.game_to_auth_id.get(k)) in runtime_keys:
+                bot_state.game_to_auth_id.pop(k, None)
 
         for k in keys:
             if not k:
@@ -1215,11 +1408,13 @@ async def api_user_restart_account(request: web.Request) -> web.Response:
         if not user:
             return _json_error("User not found", 404)
         allowed = False
+        restart_mode = "battle_royal"
         for acc in user.get("accounts", []):
             uid_val = str(acc.get("uid") or "")
             tok_val = str(acc.get("token") or "")
-            if acc_id in {uid_val, tok_val[:20], f"tok_{tok_val[:20]}"}:
+            if acc_id in {uid_val, tok_val[:20], f"tok_{tok_val[:20]}", str(acc.get("actual_uid", ""))}:
                 allowed = True
+                restart_mode = str(acc.get("mode", "battle_royal"))
                 break
         if not allowed:
             for ba in bot_state.accounts.values():
@@ -1228,32 +1423,19 @@ async def api_user_restart_account(request: web.Request) -> web.Response:
                     break
         if not allowed:
             return _json_error("Account not found", 404)
-        # Resolve the dashboard identifier to the canonical saved account identifier.
-        resolved_id = acc_id
-        for acc in user.get("accounts", []):
-            saved_uid = str(acc.get("uid") or "").strip()
-            saved_token = str(acc.get("token") or "").strip()
-            if acc_id in {saved_uid, saved_token[:20], f"tok_{saved_token[:20]}"} and saved_uid:
-                resolved_id = saved_uid
-                break
-        for bot_uid, ba in bot_state.accounts.items():
-            if ba.get("owner") not in (None, "", username):
-                continue
-            ids = {str(bot_uid), str(ba.get("actual_uid", "")), str(ba.get("display_uid", "")),
-                   str(ba.get("uid", "")), str(ba.get("user_input_uid", ""))}
-            if acc_id in ids:
-                resolved_id = str(ba.get("user_input_uid") or ba.get("actual_uid") or bot_uid)
-                break
-
         cb = bot_state.refresh_callbacks.get("on_restart_account")
         if cb:
-            asyncio.create_task(cb(resolved_id, username))
-        return web.json_response({"status":"ok", "resolved_id": resolved_id})
+            asyncio.create_task(cb(acc_id, restart_mode))
+        return web.json_response({"status":"ok"})
     except Exception as e:
         return _json_error(str(e), 500)
 
 
 # ==================== PUBLIC API ====================
+async def api_public_maintenance(request: web.Request) -> web.Response:
+    cfg=_load_control_config()
+    return web.json_response({"status":"ok","maintenance":bool(cfg.get("maintenance")),"title":cfg.get("maintenance_title","UNDER MAINTENANCE"),"message":cfg.get("maintenance_message","Service is temporarily unavailable."),"updated_at":cfg.get("updated_at",0)},headers={"Cache-Control":"no-store"})
+
 async def api_public_popup(request: web.Request) -> web.Response:
     return web.json_response({"status": "ok", "popup": _load_popup_config()})
 
@@ -1277,7 +1459,7 @@ async def api_public_stats(request: web.Request) -> web.Response:
 
 # ==================== SERVER START ====================
 async def start_web_dashboard(host: str = "0.0.0.0", port: int = 20331):
-    app = web.Application(client_max_size=4 * 1024 * 1024)
+    app = web.Application(middlewares=[maintenance_middleware], client_max_size=4 * 1024 * 1024)
 
     # pages
     app.router.add_get("/", handle_root)
@@ -1307,6 +1489,8 @@ async def start_web_dashboard(host: str = "0.0.0.0", port: int = 20331):
     app.router.add_post("/api/admin/extend-user", api_admin_extend_user)
     app.router.add_get("/api/admin/get-popup", api_admin_get_popup)
     app.router.add_post("/api/admin/save-popup", api_admin_save_popup)
+    app.router.add_get("/api/admin/control-settings", api_admin_get_control)
+    app.router.add_post("/api/admin/control-settings", api_admin_save_control)
 
     # user
     app.router.add_get("/api/user/stats", api_user_stats)
