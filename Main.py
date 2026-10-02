@@ -49,7 +49,7 @@ START_MATCH_INTERVAL = 4.0
 NEW_MATCH_DELAY = 5.0            # Cooldown after match finish before searching next
 MAX_MATCH_DURATION = 800         # Max safety limit (13.3 minutes)
 MATCH_IDLE_TIMEOUT = 15.0        # Max silence after elimination/end before next match
-MAX_CONCURRENT_MATCHES = 3       # Background matches: keep active matches running while searching next
+MAX_CONCURRENT_MATCHES = 1       # Sequential: 1 full match at a time
 PRIORITY_REGIONS = ["BD", "IND", "SG", "TH", "PH", "VN", "MY", "ID", "HK", "TW", "BR", "EU", "RU", "TR", "ME", "NA", "SAC", "US", "SSA"]
 
 FALLBACK_UID = ""
@@ -442,7 +442,7 @@ async def _get_match_count(uid: str) -> int:
 
 async def _get_total_match_count() -> int:
     async with _match_counter_lock:
-        return sum(_match_counters.values())
+        return sum(max(0, int(v or 0)) for v in _match_counters.values())
 
 
 # ==================== TOKEN CACHE ====================
@@ -1282,12 +1282,6 @@ async def play_game(server_ip_port, thunder, sharma, udp_key, match_code,
                     await loop.sock_sendto(sock, bytes.fromhex(sharma), (resolved_ip, port))
                     sharma_sent = True
                     ack_state = "thunder_sharma_sent"
-                    try:
-                        active_now = await _get_match_count(uid_str)
-                        mode_label = "LONE WOLF" if str(mode).lower() == "lone_wolf" else "BR"
-                        bot_state.update_status(uid_str, f"IN_MATCH ({mode_label})", active_now)
-                    except Exception:
-                        pass
                     print_success(f"[MATCH #{match_index}] Startup packets delivered. Playing active match in-game!")
                 except Exception as e:
                     print_error(f"[MATCH #{match_index}] Startup packet send failed: {e}")
@@ -1446,7 +1440,7 @@ async def play_game(server_ip_port, thunder, sharma, udp_key, match_code,
 
 
 # ============================================================
-# 🔥 functional_battle_royale — Sequential BR Gateway Loop
+# 🔥 functional_battle_royale — Background Parallel BR Gateway Loop
 # ============================================================
 async def functional_battle_royale(addrs, starter_packet, account_region, client_version,
                                 key, iv, account_id="", account_data=None,
@@ -1553,11 +1547,7 @@ async def functional_battle_royale(addrs, starter_packet, account_region, client
                         )
                         active = await _get_match_count(uid_str)
                         try:
-                            bot_state.update_status(
-                                uid_str,
-                                "IN_MATCH (BR)" if active > 0 else "SEARCHING (BR)",
-                                active,
-                            )
+                            bot_state.update_status(uid_str, "SEARCHING (BR)", active)
                         except Exception:
                             pass
                     except Exception as e:
@@ -1569,17 +1559,6 @@ async def functional_battle_royale(addrs, starter_packet, account_region, client
 
                 while True:
                     play_matches[:] = [m for m in play_matches if not m.done()]
-
-                    # Background-match mode: keep existing UDP matches alive and
-                    # only open a new gateway/search when a concurrency slot exists.
-                    active_count = len(play_matches)
-                    if active_count >= MAX_CONCURRENT_MATCHES:
-                        try:
-                            bot_state.update_status(uid_str, "IN_MATCH (BR)", active_count)
-                        except Exception:
-                            pass
-                        await asyncio.sleep(1.0)
-                        continue
 
                     if bot_state.is_paused(uid_str):
                         try:
@@ -1670,7 +1649,7 @@ async def functional_battle_royale(addrs, starter_packet, account_region, client
                                 )
                                 try:
                                     bot_state.increment_match_started()
-                                    bot_state.update_status(uid_str, "MATCH FOUND (BR)", await _get_match_count(uid_str))
+                                    bot_state.update_status(uid_str, "IN_MATCH (BR)", 1)
                                 except Exception:
                                     pass
 
@@ -1693,36 +1672,19 @@ async def functional_battle_royale(addrs, starter_packet, account_region, client
                                 bot_state.register_match_task(uid_str, new_match)
 
                                 consecutive_parse_failures = 0
-                                print_success(
-                                    f"[✓] BR Match #{match_index} active. Gateway connection held active | UID: {uid_str}"
-                                )
-
-                                # IMPORTANT: the UDP match is intentionally left running in
-                                # the background. The gateway is only the match-search channel.
-                                # Closing it here must NOT cancel new_match. The next outer
-                                # iteration can therefore search for another BR match while
-                                # this UDP match continues until its own natural end/safety timeout.
-                                play_matches[:] = [m for m in play_matches if not m.done()]
-                                active_count = len(play_matches)
+                                active_now = await _get_match_count(uid_str)
                                 try:
-                                    bot_state.update_status(uid_str, "IN_MATCH (BR)", active_count)
+                                    bot_state.update_status(uid_str, "IN_MATCH (BR)", active_now)
                                 except Exception:
                                     pass
-
-                                if gateway_ping_task:
-                                    gateway_ping_task.cancel()
-                                    gateway_ping_task = None
-                                bot_state.unregister_writer(uid_str, writer)
-                                await safe_close_writer(writer)
-                                writer = None
-
-                                print_info(
-                                    f"[BACKGROUND] BR Match #{match_index} continues in UDP background | "
-                                    f"Active={active_count}/{MAX_CONCURRENT_MATCHES}; next search in {NEW_MATCH_DELAY}s"
+                                print_success(
+                                    f"[✓] BR Match #{match_index} running in BACKGROUND | "
+                                    f"Active matches: {active_now} | UID: {uid_str}"
                                 )
-                                await asyncio.sleep(NEW_MATCH_DELAY)
-                                reconnects = 0
-                                break
+                                # IMPORTANT: keep the UDP match task in background. The gateway continues
+                                # independently while this TCP gateway continues searching for the next match.
+                                # The gateway reader below remains the single reader for this connection.
+                                continue
 
                             else:
                                 print_info(f"[FUNCTIONAL] Configuration packet received ({packet_length}B), maintaining queue...")
@@ -1982,10 +1944,6 @@ async def functional_lone_wolf(addrs, starter_packet, account_region, client_ver
 
                                 match_index = await _inc_match(uid_str)
                                 total = await _get_total_match_count()
-                                try:
-                                    bot_state.update_status(uid_str, "MATCH FOUND (LONE WOLF)", match_index)
-                                except Exception:
-                                    pass
                                 print_colored(
                                     f"🚀 [MATCH #{match_index}] UDP starting → {server_ip_port} (background)",
                                     Colors.CYAN

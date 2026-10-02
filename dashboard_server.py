@@ -104,26 +104,6 @@ def _payment_public_config():
         }
     return {"upi_id": cfg["upi_id"], "qr_file": cfg["qr_file"], "plans": plans}
 
-# ==================== RUNTIME CONTROL CONFIG ====================
-CONTROL_CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "control_config.json")
-DEFAULT_CONTROL_CONFIG = {"max_concurrent_matches": 3}
-
-def _load_control_config() -> Dict[str, Any]:
-    """Load runtime controls safely; dashboard must still boot if the file is absent/corrupt."""
-    cfg = dict(DEFAULT_CONTROL_CONFIG)
-    try:
-        if os.path.exists(CONTROL_CONFIG_FILE):
-            with open(CONTROL_CONFIG_FILE, "r", encoding="utf-8") as f:
-                saved = json.load(f)
-            if isinstance(saved, dict):
-                value = int(saved.get("max_concurrent_matches", cfg["max_concurrent_matches"]))
-                cfg["max_concurrent_matches"] = max(1, min(value, 10))
-    except Exception:
-        pass
-    return cfg
-
-
-
 # ==================== EXP TABLE ====================
 EXP_TABLE: Dict[int, int] = {
     1: 0, 2: 48, 3: 202, 4: 544, 5: 1012, 6: 1844, 7: 2792, 8: 3800,

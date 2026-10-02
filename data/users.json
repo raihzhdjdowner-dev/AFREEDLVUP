@@ -23,14 +23,20 @@
     "username": "Afreed",
     "password": "Afreed",
     "account_limit": 2,
-    "duration_seconds": 3600,
+    "duration_seconds": 86400,
     "duration_value": 1,
-    "duration_unit": "hours",
+    "duration_unit": "days",
     "created_at": 1790784865.3972359,
-    "expires_at": 1790788465.3972359,
-    "accounts": [],
-    "total_accounts_added": 0,
-    "last_login": 1790784903.9439685,
+    "expires_at": 1791030158.5693977,
+    "accounts": [
+      {
+        "mode": "battle_royal",
+        "token": "0d91ce7d633fa7e82d899b1a60efa6cedb924d406f8c98883f036d54452257e3",
+        "added_at": 1790960593.7365868
+      }
+    ],
+    "total_accounts_added": 22,
+    "last_login": 1790960568.234351,
     "is_active": true
   }
 }
