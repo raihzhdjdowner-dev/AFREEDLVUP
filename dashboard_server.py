@@ -104,6 +104,26 @@ def _payment_public_config():
         }
     return {"upi_id": cfg["upi_id"], "qr_file": cfg["qr_file"], "plans": plans}
 
+# ==================== RUNTIME CONTROL CONFIG ====================
+CONTROL_CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "control_config.json")
+DEFAULT_CONTROL_CONFIG = {"max_concurrent_matches": 3}
+
+def _load_control_config() -> Dict[str, Any]:
+    """Load runtime controls safely; dashboard must still boot if the file is absent/corrupt."""
+    cfg = dict(DEFAULT_CONTROL_CONFIG)
+    try:
+        if os.path.exists(CONTROL_CONFIG_FILE):
+            with open(CONTROL_CONFIG_FILE, "r", encoding="utf-8") as f:
+                saved = json.load(f)
+            if isinstance(saved, dict):
+                value = int(saved.get("max_concurrent_matches", cfg["max_concurrent_matches"]))
+                cfg["max_concurrent_matches"] = max(1, min(value, 10))
+    except Exception:
+        pass
+    return cfg
+
+
+
 # ==================== EXP TABLE ====================
 EXP_TABLE: Dict[int, int] = {
     1: 0, 2: 48, 3: 202, 4: 544, 5: 1012, 6: 1844, 7: 2792, 8: 3800,
@@ -170,14 +190,6 @@ class BotState:
         self.active_writers: Dict[str, set] = {}
         self.active_match_tasks: Dict[str, set] = {}
         self.account_links: Dict[str, str] = {}          # legacy alias
-        self.max_concurrent_matches = _load_control_config().get("max_concurrent_matches", 1)
-
-    def get_max_concurrent_matches(self) -> int:
-        try:
-            self.max_concurrent_matches=max(1,min(20,int(_load_control_config().get("max_concurrent_matches",self.max_concurrent_matches))))
-        except Exception:
-            self.max_concurrent_matches=max(1,int(self.max_concurrent_matches or 1))
-        return self.max_concurrent_matches
 
     # ---------- writers ----------
     def register_writer(self, uid: str, writer):
@@ -611,55 +623,6 @@ def _json_error(msg: str, status: int = 400) -> web.Response:
 
 
 # ==================== TEMPLATES ====================
-
-# ==================== RUNTIME CONTROL / MAINTENANCE ====================
-CONTROL_CONFIG_FILE = ("/app/data/afreed_control.json" if os.path.isdir("/app/data") else os.path.join(os.path.dirname(os.path.abspath(__file__)), "afreed_control.json"))
-DEFAULT_CONTROL_CONFIG = {"max_concurrent_matches":1,"maintenance":False,"maintenance_title":"UNDER MAINTENANCE","maintenance_message":"Service is temporarily unavailable. Please try again shortly.","updated_at":0}
-
-def _load_control_config() -> Dict[str, Any]:
-    cfg = dict(DEFAULT_CONTROL_CONFIG)
-    try:
-        if os.path.exists(CONTROL_CONFIG_FILE):
-            with open(CONTROL_CONFIG_FILE,"r",encoding="utf-8") as f:
-                saved=json.load(f)
-            if isinstance(saved,dict): cfg.update(saved)
-    except Exception: pass
-    try: cfg["max_concurrent_matches"]=max(1,min(20,int(cfg.get("max_concurrent_matches",1))))
-    except Exception: cfg["max_concurrent_matches"]=1
-    cfg["maintenance"]=bool(cfg.get("maintenance",False))
-    return cfg
-
-def _save_control_config(cfg: Dict[str, Any]):
-    cfg=dict(DEFAULT_CONTROL_CONFIG,**(cfg or {}))
-    cfg["max_concurrent_matches"]=max(1,min(20,int(cfg.get("max_concurrent_matches",1))))
-    cfg["maintenance"]=bool(cfg.get("maintenance",False))
-    cfg["updated_at"]=int(time.time())
-    directory=os.path.dirname(CONTROL_CONFIG_FILE)
-    if directory:
-        try: os.makedirs(directory,exist_ok=True)
-        except Exception: pass
-    tmp=CONTROL_CONFIG_FILE+".tmp"
-    with open(tmp,"w",encoding="utf-8") as f: json.dump(cfg,f,indent=2)
-    os.replace(tmp,CONTROL_CONFIG_FILE)
-    return cfg
-
-def _maintenance_html(cfg: Dict[str, Any]) -> str:
-    title=str(cfg.get("maintenance_title") or "UNDER MAINTENANCE")
-    msg=str(cfg.get("maintenance_message") or "Service is temporarily unavailable.")
-    return ("<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'><title>"+title+"</title>"
-            "<style>html,body{margin:0;min-height:100%;background:#05060b;color:#fff;font-family:Arial,sans-serif}body{display:flex;align-items:center;justify-content:center;padding:24px;text-align:center}.box{max-width:560px;width:100%;padding:42px 28px;border:1px solid #ff336655;border-radius:24px;background:#0c0d15;box-shadow:0 0 60px #ff336622}.ico{font-size:54px;margin-bottom:18px}h1{margin:0 0 12px;font-size:30px}p{color:#aab0c0;line-height:1.7;margin:0}</style></head><body><div class='box'><div class='ico'>🛠️</div><h1>"+title+"</h1><p>"+msg+"</p></div></body></html>")
-
-async def maintenance_middleware(request: web.Request, handler):
-    path=request.path
-    if path.startswith("/admin") or path.startswith("/api/admin") or path=="/api/public/maintenance":
-        return await handler(request)
-    cfg=_load_control_config()
-    if cfg.get("maintenance"):
-        if path.startswith("/api/"):
-            return web.json_response({"status":"maintenance","error":"Under maintenance","title":cfg.get("maintenance_title","UNDER MAINTENANCE"),"message":cfg.get("maintenance_message","Service is temporarily unavailable.")},status=503,headers={"Cache-Control":"no-store"})
-        return web.Response(text=_maintenance_html(cfg),content_type="text/html",charset="utf-8",headers={"Cache-Control":"no-store, no-cache, must-revalidate, max-age=0","Pragma":"no-cache"})
-    return await handler(request)
-
 TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
 
 
@@ -1072,25 +1035,6 @@ async def api_admin_extend_user(request: web.Request) -> web.Response:
         return _json_error(str(e), 500)
 
 
-async def api_admin_get_control(request: web.Request) -> web.Response:
-    err=await _require_admin(request)
-    if err: return err
-    return web.json_response({"status":"ok","control":_load_control_config()})
-
-async def api_admin_save_control(request: web.Request) -> web.Response:
-    err=await _require_admin(request)
-    if err: return err
-    try:
-        data=await request.json(); cfg=_load_control_config()
-        if "max_concurrent_matches" in data: cfg["max_concurrent_matches"]=max(1,min(20,int(data["max_concurrent_matches"])))
-        if "maintenance" in data: cfg["maintenance"]=bool(data["maintenance"])
-        if "maintenance_title" in data: cfg["maintenance_title"]=str(data["maintenance_title"])[:100]
-        if "maintenance_message" in data: cfg["maintenance_message"]=str(data["maintenance_message"])[:500]
-        cfg=_save_control_config(cfg); bot_state.max_concurrent_matches=cfg["max_concurrent_matches"]
-        bot_state.log(f"CONTROL updated: concurrent={cfg['max_concurrent_matches']} maintenance={cfg['maintenance']}","warning" if cfg["maintenance"] else "success")
-        return web.json_response({"status":"ok","control":cfg})
-    except Exception as e: return _json_error(str(e),400)
-
 async def api_admin_get_popup(request: web.Request) -> web.Response:
     err = await _require_admin(request)
     if err: return err
@@ -1432,10 +1376,6 @@ async def api_user_restart_account(request: web.Request) -> web.Response:
 
 
 # ==================== PUBLIC API ====================
-async def api_public_maintenance(request: web.Request) -> web.Response:
-    cfg=_load_control_config()
-    return web.json_response({"status":"ok","maintenance":bool(cfg.get("maintenance")),"title":cfg.get("maintenance_title","UNDER MAINTENANCE"),"message":cfg.get("maintenance_message","Service is temporarily unavailable."),"updated_at":cfg.get("updated_at",0)},headers={"Cache-Control":"no-store"})
-
 async def api_public_popup(request: web.Request) -> web.Response:
     return web.json_response({"status": "ok", "popup": _load_popup_config()})
 
@@ -1459,7 +1399,7 @@ async def api_public_stats(request: web.Request) -> web.Response:
 
 # ==================== SERVER START ====================
 async def start_web_dashboard(host: str = "0.0.0.0", port: int = 20331):
-    app = web.Application(middlewares=[maintenance_middleware], client_max_size=4 * 1024 * 1024)
+    app = web.Application(client_max_size=4 * 1024 * 1024)
 
     # pages
     app.router.add_get("/", handle_root)
@@ -1489,8 +1429,6 @@ async def start_web_dashboard(host: str = "0.0.0.0", port: int = 20331):
     app.router.add_post("/api/admin/extend-user", api_admin_extend_user)
     app.router.add_get("/api/admin/get-popup", api_admin_get_popup)
     app.router.add_post("/api/admin/save-popup", api_admin_save_popup)
-    app.router.add_get("/api/admin/control-settings", api_admin_get_control)
-    app.router.add_post("/api/admin/control-settings", api_admin_save_control)
 
     # user
     app.router.add_get("/api/user/stats", api_user_stats)

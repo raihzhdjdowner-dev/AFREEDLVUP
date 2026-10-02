@@ -34,7 +34,7 @@ import thunderFF_pb2
 import StartMatch_pb2
 
 # ==================== WEB DASHBOARD ====================
-from dashboard_server import bot_state, start_web_dashboard
+from dashboard_server import bot_state, start_web_dashboard, calculate_level_progress
 
 # ==================== CONFIGURATION ====================
 WEB_HOST = "0.0.0.0"
@@ -49,7 +49,7 @@ START_MATCH_INTERVAL = 4.0
 NEW_MATCH_DELAY = 5.0            # Cooldown after match finish before searching next
 MAX_MATCH_DURATION = 800         # Max safety limit (13.3 minutes)
 MATCH_IDLE_TIMEOUT = 15.0        # Max silence after elimination/end before next match
-MAX_CONCURRENT_MATCHES = 1       # Default; admin panel can raise this at runtime
+MAX_CONCURRENT_MATCHES = 3       # Background matches: keep active matches running while searching next
 PRIORITY_REGIONS = ["BD", "IND", "SG", "TH", "PH", "VN", "MY", "ID", "HK", "TW", "BR", "EU", "RU", "TR", "ME", "NA", "SAC", "US", "SSA"]
 
 FALLBACK_UID = ""
@@ -439,6 +439,10 @@ async def _dec_match(uid: str) -> int:
 async def _get_match_count(uid: str) -> int:
     async with _match_counter_lock:
         return _match_counters.get(uid, 0)
+
+async def _get_total_match_count() -> int:
+    async with _match_counter_lock:
+        return sum(_match_counters.values())
 
 
 # ==================== TOKEN CACHE ====================
@@ -1278,6 +1282,12 @@ async def play_game(server_ip_port, thunder, sharma, udp_key, match_code,
                     await loop.sock_sendto(sock, bytes.fromhex(sharma), (resolved_ip, port))
                     sharma_sent = True
                     ack_state = "thunder_sharma_sent"
+                    try:
+                        active_now = await _get_match_count(uid_str)
+                        mode_label = "LONE WOLF" if str(mode).lower() == "lone_wolf" else "BR"
+                        bot_state.update_status(uid_str, f"IN_MATCH ({mode_label})", active_now)
+                    except Exception:
+                        pass
                     print_success(f"[MATCH #{match_index}] Startup packets delivered. Playing active match in-game!")
                 except Exception as e:
                     print_error(f"[MATCH #{match_index}] Startup packet send failed: {e}")
@@ -1543,7 +1553,11 @@ async def functional_battle_royale(addrs, starter_packet, account_region, client
                         )
                         active = await _get_match_count(uid_str)
                         try:
-                            bot_state.update_status(uid_str, "SEARCHING (BR)", active)
+                            bot_state.update_status(
+                                uid_str,
+                                "IN_MATCH (BR)" if active > 0 else "SEARCHING (BR)",
+                                active,
+                            )
                         except Exception:
                             pass
                     except Exception as e:
@@ -1555,6 +1569,17 @@ async def functional_battle_royale(addrs, starter_packet, account_region, client
 
                 while True:
                     play_matches[:] = [m for m in play_matches if not m.done()]
+
+                    # Background-match mode: keep existing UDP matches alive and
+                    # only open a new gateway/search when a concurrency slot exists.
+                    active_count = len(play_matches)
+                    if active_count >= MAX_CONCURRENT_MATCHES:
+                        try:
+                            bot_state.update_status(uid_str, "IN_MATCH (BR)", active_count)
+                        except Exception:
+                            pass
+                        await asyncio.sleep(1.0)
+                        continue
 
                     if bot_state.is_paused(uid_str):
                         try:
@@ -1571,8 +1596,7 @@ async def functional_battle_royale(addrs, starter_packet, account_region, client
                         break
 
                     now = asyncio.get_running_loop().time()
-                    max_active = bot_state.get_max_concurrent_matches()
-                    if len(play_matches) < max_active and (now - last_start_time >= START_MATCH_INTERVAL):
+                    if len(play_matches) == 0 and (now - last_start_time >= START_MATCH_INTERVAL):
                         await send_start_match()
 
                     try:
@@ -1646,7 +1670,7 @@ async def functional_battle_royale(addrs, starter_packet, account_region, client
                                 )
                                 try:
                                     bot_state.increment_match_started()
-                                    bot_state.update_status(uid_str, "IN_MATCH (BR)", await _get_match_count(uid_str))
+                                    bot_state.update_status(uid_str, "MATCH FOUND (BR)", await _get_match_count(uid_str))
                                 except Exception:
                                     pass
 
@@ -1658,12 +1682,11 @@ async def functional_battle_royale(addrs, starter_packet, account_region, client
                                         udp_key,
                                         match_code,
                                         effective_acc_id,
-                                        account_region,
+                                        "BD",
                                         client_version,
                                         current_key,
                                         current_iv,
-                                        match_index=match_index,
-                                        mode="battle_royal"
+                                        match_index=match_index
                                     )
                                 )
                                 play_matches.append(new_match)
@@ -1674,20 +1697,30 @@ async def functional_battle_royale(addrs, starter_packet, account_region, client
                                     f"[✓] BR Match #{match_index} active. Gateway connection held active | UID: {uid_str}"
                                 )
 
-                                # IMPORTANT: keep this match fully in the background.
-                                # The gateway only delivered the match allocation; play_game owns UDP.
+                                # IMPORTANT: the UDP match is intentionally left running in
+                                # the background. The gateway is only the match-search channel.
+                                # Closing it here must NOT cancel new_match. The next outer
+                                # iteration can therefore search for another BR match while
+                                # this UDP match continues until its own natural end/safety timeout.
                                 play_matches[:] = [m for m in play_matches if not m.done()]
-                                active_now = await _get_match_count(uid_str)
+                                active_count = len(play_matches)
                                 try:
-                                    bot_state.update_status(uid_str, "IN_MATCH (BR)", active_now)
+                                    bot_state.update_status(uid_str, "IN_MATCH (BR)", active_count)
                                 except Exception:
                                     pass
+
                                 if gateway_ping_task:
                                     gateway_ping_task.cancel()
+                                    gateway_ping_task = None
                                 bot_state.unregister_writer(uid_str, writer)
                                 await safe_close_writer(writer)
                                 writer = None
-                                print_success(f"[✓] BR Match #{match_index} running in background | Active: {active_now}/{bot_state.get_max_concurrent_matches()} | UID: {uid_str}")
+
+                                print_info(
+                                    f"[BACKGROUND] BR Match #{match_index} continues in UDP background | "
+                                    f"Active={active_count}/{MAX_CONCURRENT_MATCHES}; next search in {NEW_MATCH_DELAY}s"
+                                )
+                                await asyncio.sleep(NEW_MATCH_DELAY)
                                 reconnects = 0
                                 break
 
@@ -1949,6 +1982,10 @@ async def functional_lone_wolf(addrs, starter_packet, account_region, client_ver
 
                                 match_index = await _inc_match(uid_str)
                                 total = await _get_total_match_count()
+                                try:
+                                    bot_state.update_status(uid_str, "MATCH FOUND (LONE WOLF)", match_index)
+                                except Exception:
+                                    pass
                                 print_colored(
                                     f"🚀 [MATCH #{match_index}] UDP starting → {server_ip_port} (background)",
                                     Colors.CYAN
@@ -1966,7 +2003,7 @@ async def functional_lone_wolf(addrs, starter_packet, account_region, client_ver
                                         udp_key,
                                         match_code,
                                         effective_acc_id,
-                                        account_region,
+                                        "BD",
                                         client_version,
                                         current_key,
                                         current_iv,
@@ -2804,7 +2841,7 @@ async def main():
             bot_state.account_workers[tok[:16]] = t
         elif "uid" in acc and "password" in acc and acc["uid"]:
             u = str(acc["uid"])
-            t = asyncio.create_task(account_loop_guest(u, acc["password"], mode=str(acc.get("mode", "battle_royal"))))
+            t = asyncio.create_task(account_loop_guest(u, acc["password"]))
             bot_state.account_workers[u] = t
 
         if idx < len(accounts) - 1:
