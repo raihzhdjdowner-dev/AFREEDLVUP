@@ -170,6 +170,72 @@ class BotState:
         self.active_writers: Dict[str, set] = {}
         self.active_match_tasks: Dict[str, set] = {}
         self.account_links: Dict[str, str] = {}          # legacy alias
+        # Per-user BR batch controls. Range is 1..20.
+        self.user_match_limits: Dict[str, int] = {}
+        # One BR worker owns the batch gate for each runtime account.
+        # This prevents duplicate dashboard callbacks/workers from creating
+        # extra matches for the same account.
+        self.br_batch_state: Dict[str, Dict[str, Any]] = {}
+
+    def get_user_match_limit(self, username: str, default: int = 20) -> int:
+        try:
+            value = int(self.user_match_limits.get(str(username or ""), default))
+        except Exception:
+            value = default
+        return max(1, min(20, value))
+
+    def set_user_match_limit(self, username: str, value: int) -> int:
+        username = str(username or "").strip()
+        if not username:
+            raise ValueError("username required")
+        value = int(value)
+        if value < 1 or value > 20:
+            raise ValueError("match batch limit must be between 1 and 20")
+        self.user_match_limits[username] = value
+        return value
+
+    def get_br_batch_state(self, uid: str, default_limit: int = 20) -> Dict[str, Any]:
+        key = str(uid)
+        state = self.br_batch_state.setdefault(key, {
+            "batch_number": 1,
+            "assigned": 0,
+            "limit": max(1, min(20, int(default_limit or 20))),
+        })
+        state["limit"] = max(1, min(20, int(state.get("limit", default_limit) or default_limit)))
+        state["assigned"] = max(0, int(state.get("assigned", 0) or 0))
+        state["batch_number"] = max(1, int(state.get("batch_number", 1) or 1))
+        return state
+
+    def reset_br_batch(self, uid: str, limit: int = 20) -> Dict[str, Any]:
+        state = self.get_br_batch_state(uid, limit)
+        state["batch_number"] += 1 if state.get("assigned", 0) else 0
+        state["assigned"] = 0
+        state["limit"] = max(1, min(20, int(limit or 20)))
+        return state
+
+    def bind_runtime_owner(self, username: str, identifiers) -> int:
+        """Attach a dashboard user to matching live account/credential records."""
+        username = str(username or "").strip()
+        ids = {str(x) for x in (identifiers or set()) if str(x)}
+        changed = 0
+        for key, acc in self.accounts.items():
+            candidates = {str(key), str(acc.get("uid", "")), str(acc.get("actual_uid", "")),
+                          str(acc.get("display_uid", "")), str(acc.get("auth_uid", ""))}
+            tok = str(acc.get("token", ""))
+            if tok:
+                candidates.update({tok, tok[:20], f"tok_{tok[:20]}"})
+            if candidates & ids:
+                acc["owner"] = username
+                changed += 1
+        for key, acc in self.account_credentials.items():
+            candidates = {str(key), str(acc.get("account_id", "")), str(acc.get("auth_uid", ""))}
+            tok = str(acc.get("auth_token", ""))
+            if tok:
+                candidates.update({tok, tok[:20], f"tok_{tok[:20]}"})
+            if candidates & ids:
+                acc["owner"] = username
+                changed += 1
+        return changed
 
     # ---------- writers ----------
     def register_writer(self, uid: str, writer):
@@ -346,6 +412,14 @@ class BotState:
                 "matches_played": 0,
                 "active_matches": 0,
                 "last_match_time": None,
+                "last_match_status": "WAITING",
+                "last_match_number": 0,
+                "last_match_exp_gain": 0,
+                "match_history": [],
+                "last_match_status": "WAITING",
+                "last_match_number": 0,
+                "last_match_exp_gain": 0,
+                "match_history": [],
                 "last_updated": time.strftime("%H:%M:%S"),
                 "token": token or "",
                 "start_time": time.time(),
@@ -384,6 +458,55 @@ class BotState:
 
         self.recalc_totals()
 
+    def mark_match_started(self, uid: str, match_number: int):
+        """Record a visible per-match RUNNING event for the dashboard."""
+        uid_str = str(uid)
+        acc = self.accounts.get(uid_str)
+        if not acc:
+            mapped = self.game_to_auth_id.get(uid_str) or self.auth_to_game_id.get(uid_str)
+            if mapped:
+                acc = self.accounts.get(str(mapped))
+        if not acc:
+            return
+        acc["last_match_status"] = "RUNNING"
+        acc["last_match_number"] = int(match_number or 0)
+        acc["last_match_exp_gain"] = 0
+        history = acc.setdefault("match_history", [])
+        history.append({"number": int(match_number or 0), "status": "RUNNING", "exp_gain": 0, "time": time.strftime("%H:%M:%S")})
+        del history[:-12]
+        acc["last_updated"] = time.strftime("%H:%M:%S")
+
+    def mark_match_finished(self, uid: str, match_number: int, completed: bool = True):
+        """Mark the assigned match as COMPLETE/FAILED and keep a short history."""
+        uid_str = str(uid)
+        acc = self.accounts.get(uid_str)
+        if not acc:
+            mapped = self.game_to_auth_id.get(uid_str) or self.auth_to_game_id.get(uid_str)
+            if mapped:
+                acc = self.accounts.get(str(mapped))
+        if not acc:
+            return
+        status = "COMPLETE" if completed else "FAILED"
+        num = int(match_number or 0)
+        history = acc.setdefault("match_history", [])
+        found = None
+        for item in reversed(history):
+            if int(item.get("number", 0)) == num:
+                found = item
+                break
+        if found is None:
+            found = {"number": num, "exp_gain": 0}
+            history.append(found)
+        found["status"] = status
+        found["time"] = time.strftime("%H:%M:%S")
+        acc["last_match_status"] = status
+        acc["last_match_number"] = num
+        acc["last_match_exp_gain"] = int(found.get("exp_gain", 0) or 0)
+        acc["last_match_time"] = time.strftime("%H:%M:%S")
+        acc["last_updated"] = time.strftime("%H:%M:%S")
+        del history[:-12]
+        self.log(f"{'✓' if completed else '✗'} Match #{num} {status} | UID {uid_str}", "success" if completed else "warning", uid_str)
+
     def update_exp(self, uid: str, current_exp: int, level: Optional[int] = None):
         uid_str = str(uid)
         acc = self.accounts.get(uid_str)
@@ -411,6 +534,12 @@ class BotState:
 
         diff = current_exp - old_exp
         if diff > 0:
+            acc["last_match_exp_gain"] = diff
+            history = acc.get("match_history", [])
+            for item in reversed(history):
+                if item.get("status") == "COMPLETE":
+                    item["exp_gain"] = diff
+                    break
             self.log(
                 f"★ UID {uid_str} ({acc['nickname']}) gained +{diff:,} EXP | "
                 f"Level {acc['level']} ({prog['progress_pct']}% - {prog['remaining_exp']:,} EXP to Lvl {prog['next_level']})",
@@ -1133,7 +1262,9 @@ async def api_user_stats(request: web.Request) -> web.Response:
                 for k in ("current_exp", "gained_exp", "level", "nickname", "region",
                           "status", "matches_played", "active_matches", "last_updated",
                           "likes", "next_level", "remaining_exp", "target_exp",
-                          "needed_for_level", "earned_in_level", "progress_pct"):
+                          "needed_for_level", "earned_in_level", "progress_pct",
+                          "last_match_status", "last_match_number", "last_match_exp_gain",
+                          "match_history"):
                     if k in fresh:
                         acc[k] = fresh[k]
 
@@ -1153,6 +1284,84 @@ async def api_user_stats(request: web.Request) -> web.Response:
             "created_at": user.get("created_at", 0),
             "total_accounts_added": user.get("total_accounts_added", 0),
         })
+    except Exception as e:
+        return _json_error(str(e), 500)
+
+
+async def api_user_match_settings(request: web.Request) -> web.Response:
+    err = await _require_user(request)
+    if err: return err
+    try:
+        sess = await get_session(_get_sid(request))
+        username = sess["username"]
+        user = await get_user(username) or {}
+        saved = user.get("match_batch_limit")
+        if saved is not None and str(username) not in bot_state.user_match_limits:
+            try:
+                bot_state.set_user_match_limit(username, int(saved))
+            except Exception:
+                pass
+        return web.json_response({
+            "status": "ok",
+            "match_batch_limit": bot_state.get_user_match_limit(username),
+            "min": 1,
+            "max": 20,
+        })
+    except Exception as e:
+        return _json_error(str(e), 500)
+
+
+async def api_user_match_settings_save(request: web.Request) -> web.Response:
+    err = await _require_user(request)
+    if err: return err
+    try:
+        sess = await get_session(_get_sid(request))
+        username = sess["username"]
+        data = await request.json()
+        value = int(data.get("match_batch_limit", 20))
+        if value < 1 or value > 20:
+            return _json_error("Choose a batch size from 1 to 20")
+        old = bot_state.get_user_match_limit(username)
+        new = bot_state.set_user_match_limit(username, value)
+
+        # Make sure a worker that was started before this control existed is
+        # also associated with the logged-in dashboard user.
+        user = await get_user(username) or {}
+        identifiers = set()
+        for acc in user.get("accounts", []):
+            uid_val = str(acc.get("uid") or "").strip()
+            tok_val = str(acc.get("token") or "").strip()
+            if uid_val:
+                identifiers.add(uid_val)
+            if tok_val:
+                identifiers.update({tok_val, tok_val[:20], f"tok_{tok_val[:20]}"})
+        bot_state.bind_runtime_owner(username, identifiers)
+
+        # Persist the preference with the user record when possible.
+        try:
+            user["match_batch_limit"] = new
+            users_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "users.json")
+            if os.path.exists(users_path):
+                with open(users_path, "r", encoding="utf-8") as f:
+                    all_users = json.load(f)
+                if username in all_users:
+                    all_users[username]["match_batch_limit"] = new
+                    with open(users_path, "w", encoding="utf-8") as f:
+                        json.dump(all_users, f, indent=2)
+        except Exception:
+            pass
+
+        bot_state.log(
+            f"User {username}: BR batch size changed {old} -> {new}. Live control enabled.",
+            "success"
+        )
+        return web.json_response({
+            "status": "ok",
+            "match_batch_limit": new,
+            "message": f"Batch limit set to {new}. It applies live to the current batch and future batches.",
+        })
+    except ValueError as e:
+        return _json_error(str(e))
     except Exception as e:
         return _json_error(str(e), 500)
 
@@ -1185,10 +1394,12 @@ async def api_user_add_account(request: web.Request) -> web.Response:
         cb = bot_state.refresh_callbacks.get("on_user_account_added")
         if cb:
             asyncio.create_task(cb(username, payload))
-        # legacy name
-        cb2 = bot_state.refresh_callbacks.get("on_account_added")
-        if cb2:
-            asyncio.create_task(cb2(payload))
+        else:
+            # Legacy fallback only. Never launch both callbacks: that creates
+            # two workers for one account and breaks the batch limit.
+            cb2 = bot_state.refresh_callbacks.get("on_account_added")
+            if cb2:
+                asyncio.create_task(cb2(payload))
         return web.json_response({"status": "ok"})
     except Exception as e:
         return _json_error(str(e), 500)
@@ -1412,6 +1623,8 @@ async def start_web_dashboard(host: str = "0.0.0.0", port: int = 20331):
 
     # user
     app.router.add_get("/api/user/stats", api_user_stats)
+    app.router.add_get("/api/user/match-settings", api_user_match_settings)
+    app.router.add_post("/api/user/match-settings", api_user_match_settings_save)
     app.router.add_post("/api/user/add-account", api_user_add_account)
     app.router.add_post("/api/user/remove-account", api_user_remove_account)
     app.router.add_post("/api/user/refresh", api_user_refresh)

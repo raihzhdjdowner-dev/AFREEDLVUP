@@ -44,16 +44,71 @@ TOKEN_CACHE_FILE = "token_cache.json"
 DEVICES_FILE = "devices.json"
 TOKEN_CACHE_TTL = 1200
 
-# 🔥 Battle Royale Sequential Queue Configuration
-START_MATCH_INTERVAL = 4.0
-NEW_MATCH_DELAY = 5.0            # Cooldown after match finish before searching next
-MAX_MATCH_DURATION = 800         # Max safety limit (13.3 minutes)
-MATCH_IDLE_TIMEOUT = 15.0        # Max silence after elimination/end before next match
-MAX_CONCURRENT_MATCHES = 1       # Sequential: 1 full match at a time
+# 🔥 Battle Royale 1–20 Match Batch Configuration
+# One gateway session stays alive while the user-selected number of assigned
+# matches run in the background. The batch limit is controlled per dashboard user.
+START_MATCH_INTERVAL = 3.0
+NEW_MATCH_DELAY = 3.0
+MAX_MATCH_DURATION = 800
+MATCH_IDLE_TIMEOUT = None  # No 30-second idle countdown; rely on explicit match-end packets/max duration
+MAX_CONCURRENT_MATCHES = 20
+MATCH_BATCH_SIZE = 20
+MATCH_LIMIT_MIN = 1
+MATCH_LIMIT_MAX = 20
+MATCH_RECOVERY_RETRIES = 3
+MATCH_RECOVERY_DELAY = 1.5
 PRIORITY_REGIONS = ["BD", "IND", "SG", "TH", "PH", "VN", "MY", "ID", "HK", "TW", "BR", "EU", "RU", "TR", "ME", "NA", "SAC", "US", "SSA"]
 
 FALLBACK_UID = ""
 FALLBACK_PASSWORD = ""
+
+
+# ==================== LIVE MATCH-LIMIT CONTROL ====================
+async def match_limit_console():
+    """Read live match-limit commands from the same terminal as the logs.
+
+    Command format: `limit 1` ... `limit 20`. Existing matches are never
+    cancelled; the new limit is applied to the current/next batch safely.
+    """
+    global MATCH_BATCH_SIZE, MAX_CONCURRENT_MATCHES
+    loop = asyncio.get_running_loop()
+    print_info(f"[CONTROL] Match limit = {MATCH_BATCH_SIZE} | type: limit 1-{MATCH_LIMIT_MAX}")
+    while True:
+        try:
+            line = await loop.run_in_executor(None, input, "[MATCH LIMIT] > ")
+            cmd = str(line or "").strip().lower()
+            if not cmd:
+                continue
+            if cmd in {"limit", "match", "matches", "help", "?"}:
+                print_info(f"[CONTROL] Current match limit: {MATCH_BATCH_SIZE}")
+                print_info(f"[CONTROL] Set with: limit 1-{MATCH_LIMIT_MAX}")
+                continue
+            parts = cmd.split()
+            if len(parts) == 2 and parts[0] in {"limit", "match", "matches"}:
+                try:
+                    value = int(parts[1])
+                except ValueError:
+                    print_warning("[CONTROL] Use a number from 1 to 20.")
+                    continue
+                if not (MATCH_LIMIT_MIN <= value <= MATCH_LIMIT_MAX):
+                    print_warning(f"[CONTROL] Match limit must be {MATCH_LIMIT_MIN}-{MATCH_LIMIT_MAX}.")
+                    continue
+                old = MATCH_BATCH_SIZE
+                MATCH_BATCH_SIZE = value
+                MAX_CONCURRENT_MATCHES = value
+                print_success(
+                    f"[CONTROL] Match limit changed: {old} -> {value}. "
+                    "Current running matches are kept; the new limit applies to assignment."
+                )
+                continue
+            print_warning("[CONTROL] Unknown command. Use: limit 1-20")
+        except (EOFError, OSError):
+            return
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            print_warning(f"[CONTROL] Console input error: {e}")
+            await asyncio.sleep(1)
 
 
 # ==================== PERSISTENT DEVICE RANDOMIZER (1:1 SYNC) ====================
@@ -751,7 +806,22 @@ async def send_majorlogin(data, release_version, server_url):
                 candidate = thunderFF_pb2.MajorLoginRes()
                 candidate.ParseFromString(raw[offset:])
                 if candidate.account_id or (candidate.region and candidate.token):
-                    print_info(f"[MAJORLOGIN] FRUX protobuf parsed at offset={offset}")
+                    # Keep the complete response fields that are defined by the
+                    # current thunderFF MajorLoginRes schema.  The supplied
+                    # successful response confirms these mappings:
+                    # 1=account_id, 2=region, 8=token, 10=url,
+                    # 21=server_time, 22=aes_ak, 23=iv_i.
+                    print_info(
+                        f"[MAJORLOGIN] protobuf parsed at offset={offset} "
+                        f"account={candidate.account_id} region={candidate.region} "
+                        f"url={candidate.url} server_time={candidate.server_time}"
+                    )
+                    if candidate.aes_ak and candidate.iv_i:
+                        print_info(
+                            f"[MAJORLOGIN] session crypto fields received: "
+                            f"AK={len(candidate.aes_ak)} bytes IV={len(candidate.iv_i)} bytes"
+                        )
+                    # Never print or persist the returned JWT/access token.
                     return candidate
             except Exception:
                 continue
@@ -1368,14 +1438,11 @@ async def play_game(server_ip_port, thunder, sharma, udp_key, match_code,
                         print_warning(f"[MATCH #{match_index}] Handshake timed out")
                         break
 
-                # 🔥 CRITICAL FIX: Once the game server stops sending UDP packets (avatar eliminated/match finished),
-                # exit after 15 seconds of silence instead of freezing for 15 minutes!
+                # No artificial 30-second idle countdown. Keep the UDP session alive
+                # until the server sends an explicit match-end signal or the normal
+                # maximum match duration/recovery path is reached.
                 elif ack_state == "thunder_sharma_sent":
-                    idle_time = time.time() - last_activity
-                    if idle_time > MATCH_IDLE_TIMEOUT:
-                        print_success(f"[MATCH #{match_index}] Match ended naturally (Server idle {int(idle_time)}s).")
-                        completed_cleanly = True
-                        break
+                    pass
 
             except BlockingIOError:
                 await asyncio.sleep(0.05)
@@ -1396,10 +1463,15 @@ async def play_game(server_ip_port, thunder, sharma, udp_key, match_code,
         return f"match #{match_index} error"
 
     finally:
+        try:
+            bot_state.mark_match_finished(uid_str, match_index, completed_cleanly)
+        except Exception:
+            pass
+
         if completed_cleanly:
             try:
                 bot_state.increment_match(uid_str)
-                print_success(f"[★] Match #{match_index} Complete | UID: {uid_str}")
+                print_success(f"[★] MATCH #{match_index} COMPLETE | UID: {uid_str}")
 
                 # Immediate profile check to update EXP right after match
                 async def _post_match_exp_check(uid):
@@ -1440,7 +1512,44 @@ async def play_game(server_ip_port, thunder, sharma, udp_key, match_code,
 
 
 # ============================================================
-# 🔥 functional_battle_royale — Background Parallel BR Gateway Loop
+# MATCH WORKER WITH RECOVERY
+# ============================================================
+async def play_match_with_recovery(
+    server_ip_port, thunder, sharma, udp_key, match_code,
+    account_id, player_region, client_version, key, iv,
+    match_index: int, mode: str, uid_str: str
+):
+    """
+    Keep one assigned match isolated from the gateway loop.
+    A transient UDP/socket failure is retried without tearing down the
+    gateway session. The recovery budget is intentionally bounded.
+    """
+    last_result = None
+    for attempt in range(1, MATCH_RECOVERY_RETRIES + 1):
+        try:
+            if attempt > 1:
+                print_warning(
+                    f"[MATCH #{match_index}] Recovery attempt "
+                    f"{attempt}/{MATCH_RECOVERY_RETRIES}..."
+                )
+                await asyncio.sleep(MATCH_RECOVERY_DELAY)
+            last_result = await play_game(
+                server_ip_port, thunder, sharma, udp_key, match_code,
+                account_id, player_region, client_version, key, iv,
+                match_index=match_index, mode=mode
+            )
+            # play_game already handles the normal terminal/idle states.
+            if "error" not in str(last_result).lower():
+                return last_result
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            last_result = f"match #{match_index} recovery error: {exc}"
+            print_warning(f"[MATCH #{match_index}] {last_result}")
+    return last_result or f"match #{match_index} failed"
+
+# ============================================================
+# 🔥 functional_battle_royale — 20-Match Background Batch Gateway
 # ============================================================
 async def functional_battle_royale(addrs, starter_packet, account_region, client_version,
                                 key, iv, account_id="", account_data=None,
@@ -1452,6 +1561,17 @@ async def functional_battle_royale(addrs, starter_packet, account_region, client
     search_attempts = 0
     last_start_time = 0.0
     uid_str = str(account_id)
+
+    # Strict batch gate: the selected number is the TOTAL number of matches
+    # assigned in a batch. A new batch is not allowed until every assigned
+    # match from the previous batch has finished. State survives gateway
+    # reconnects so reconnects/re-queues cannot reset the counter.
+    owner_name = (account_data or {}).get("owner", "") if account_data else ""
+    batch_limit = bot_state.get_user_match_limit(owner_name, default=MATCH_BATCH_SIZE)
+    batch_state = bot_state.get_br_batch_state(uid_str, batch_limit)
+    batch_state["limit"] = batch_limit
+    batch_number = int(batch_state.get("batch_number", 1))
+    batch_started = int(batch_state.get("assigned", 0))
 
     consecutive_parse_failures = 0
 
@@ -1554,8 +1674,36 @@ async def functional_battle_royale(addrs, starter_packet, account_region, client
                         print_warning(f"[!] StartMatch attempt notice: {e}")
                     last_start_time = asyncio.get_running_loop().time()
 
-                # Trigger first match search
-                await send_start_match()
+                # Do NOT search for another match while the current batch
+                # still has assigned/running matches. This is the hard gate
+                # that prevents 4 -> 5 -> 6 style over-assignment.
+                active_before_search = await _get_match_count(uid_str)
+                if batch_started >= batch_limit and active_before_search == 0:
+                    # Previous batch is genuinely finished. Advance exactly once
+                    # and only then allow the next search.
+                    owner_name = (current_account_data or {}).get("owner", owner_name) if current_account_data else owner_name
+                    next_limit = bot_state.get_user_match_limit(owner_name, default=MATCH_BATCH_SIZE)
+                    batch_state = bot_state.reset_br_batch(uid_str, next_limit)
+                    batch_number = int(batch_state["batch_number"])
+                    batch_started = 0
+                    batch_limit = next_limit
+                    print_success(
+                        f"[BATCH #{batch_number - 1}] COMPLETE: all {batch_limit if next_limit == batch_limit else batch_state.get('limit', next_limit)} assigned matches finished. "
+                        f"Starting next batch #{batch_number} with limit {batch_limit}."
+                    )
+                    await send_start_match()
+                elif batch_started < batch_limit and active_before_search < batch_limit:
+                    await send_start_match()
+                else:
+                    if batch_started >= batch_limit:
+                        print_info(
+                            f"[BATCH #{batch_number}] Gate closed: {batch_started}/{batch_limit} assigned; "
+                            f"waiting for {active_before_search} active match(es) to finish."
+                        )
+                    await safe_close_writer(writer)
+                    writer = None
+                    await asyncio.sleep(0.5)
+                    continue
 
                 while True:
                     play_matches[:] = [m for m in play_matches if not m.done()]
@@ -1575,7 +1723,59 @@ async def functional_battle_royale(addrs, starter_packet, account_region, client
                         break
 
                     now = asyncio.get_running_loop().time()
-                    if len(play_matches) == 0 and (now - last_start_time >= START_MATCH_INTERVAL):
+                    # Refresh the dashboard setting live. If the user lowers the
+                    # limit below the number already assigned, finish those
+                    # already-running matches but do not assign another one.
+                    owner_name = (current_account_data or {}).get("owner", owner_name) if current_account_data else owner_name
+                    configured_limit = bot_state.get_user_match_limit(
+                        owner_name, default=MATCH_BATCH_SIZE
+                    )
+                    if configured_limit != batch_limit:
+                        old_limit = batch_limit
+                        if batch_started == 0 and await _get_match_count(uid_str) == 0:
+                            batch_limit = configured_limit
+                            batch_state["limit"] = batch_limit
+                            print_info(
+                                f"[CONTROL] UID {uid_str} batch limit {old_limit} -> {batch_limit} "
+                                f"for batch #{batch_number}"
+                            )
+                        else:
+                            # Never shrink/grow a batch that is already running.
+                            # The dashboard choice is used by the NEXT batch.
+                            print_info(
+                                f"[CONTROL] UID {uid_str} new limit {configured_limit} saved for next batch; "
+                                f"current batch remains {batch_limit}."
+                            )
+
+                    # Never exceed the current batch limit. Already-assigned
+                    # matches are allowed to finish in the background.
+                    if batch_started < batch_limit:
+                        if len(play_matches) < min(MAX_CONCURRENT_MATCHES, batch_limit) and (
+                            now - last_start_time >= START_MATCH_INTERVAL
+                        ):
+                            await send_start_match()
+                    elif not play_matches:
+                        # All 20 assignments are finished. Start the next batch
+                        # without closing the gateway/session or pressing back.
+                        print_success(
+                            f"[BATCH #{batch_number}] {batch_limit}/{batch_limit} matches finished "
+                            f"for UID {uid_str}. Preparing next batch..."
+                        )
+                        try:
+                            bot_state.update_status(
+                                uid_str, "ONLINE (BR)", 0
+                            )
+                        except Exception:
+                            pass
+                        await asyncio.sleep(NEW_MATCH_DELAY)
+                        owner_name = (current_account_data or {}).get("owner", "") if current_account_data else ""
+                        next_limit = bot_state.get_user_match_limit(owner_name, default=MATCH_BATCH_SIZE)
+                        batch_state = bot_state.reset_br_batch(uid_str, next_limit)
+                        batch_number = int(batch_state["batch_number"])
+                        batch_started = 0
+                        batch_limit = next_limit
+                        last_start_time = 0.0
+                        print_info(f"[CONTROL] UID {uid_str} next BR batch #{batch_number} limit = {batch_limit} (1-20)")
                         await send_start_match()
 
                     try:
@@ -1643,18 +1843,33 @@ async def functional_battle_royale(addrs, starter_packet, account_region, client
                                     map_id=1
                                 )
 
+                                # Never accept a 21st assignment in the same
+                                # batch. The gateway can remain connected while
+                                # the currently assigned 20 finish in background.
+                                if batch_started >= batch_limit:
+                                    print_info(
+                                        f"[BATCH #{batch_number}] {batch_limit} assignments already queued; "
+                                        "holding gateway until they finish."
+                                    )
+                                    continue
+
+                                batch_started += 1
+                                batch_state["assigned"] = batch_started
+                                batch_state["limit"] = batch_limit
                                 match_index = await _inc_match(uid_str)
                                 print_info(
-                                    f"[⚔] Match #{match_index} Injected [BR] -> {server_ip_port} (UID: {uid_str})"
+                                    f"[BATCH #{batch_number}] [MATCH {batch_started}/{batch_limit}] "
+                                    f"Injected -> {server_ip_port} (UID: {uid_str})"
                                 )
                                 try:
                                     bot_state.increment_match_started()
+                                    bot_state.mark_match_started(uid_str, match_index)
                                     bot_state.update_status(uid_str, "IN_MATCH (BR)", 1)
                                 except Exception:
                                     pass
 
                                 new_match = asyncio.create_task(
-                                    play_game(
+                                    play_match_with_recovery(
                                         server_ip_port,
                                         thunder,
                                         sharma,
@@ -1665,7 +1880,9 @@ async def functional_battle_royale(addrs, starter_packet, account_region, client
                                         client_version,
                                         current_key,
                                         current_iv,
-                                        match_index=match_index
+                                        match_index=match_index,
+                                        mode="battle_royal",
+                                        uid_str=uid_str
                                     )
                                 )
                                 play_matches.append(new_match)
@@ -1678,13 +1895,33 @@ async def functional_battle_royale(addrs, starter_packet, account_region, client
                                 except Exception:
                                     pass
                                 print_success(
-                                    f"[✓] BR Match #{match_index} running in BACKGROUND | "
+                                    f"[✓] BR Batch #{batch_number} Match {batch_started}/{batch_limit} running in BACKGROUND | "
                                     f"Active matches: {active_now} | UID: {uid_str}"
                                 )
-                                # IMPORTANT: keep the UDP match task in background. The gateway continues
-                                # independently while this TCP gateway continues searching for the next match.
-                                # The gateway reader below remains the single reader for this connection.
-                                continue
+                                # IMPORTANT: use the same gateway lifecycle as the working
+                                # Lone Wolf flow: once one match is assigned, the UDP match
+                                # stays in background, while this matchmaking TCP gateway is
+                                # closed and recreated for the next search. This avoids repeatedly
+                                # sending StartMatch on a stale/queued BR gateway.
+                                print_info(
+                                    f"[BR] Match {batch_started}/{batch_limit} assigned. "
+                                    f"Closing matchmaking gateway and re-queuing after {NEW_MATCH_DELAY}s..."
+                                )
+                                if gateway_ping_task:
+                                    gateway_ping_task.cancel()
+                                    gateway_ping_task = None
+                                try:
+                                    bot_state.unregister_writer(uid_str, writer)
+                                except Exception:
+                                    pass
+                                try:
+                                    await safe_close_writer(writer)
+                                except Exception:
+                                    pass
+                                writer = None
+                                await asyncio.sleep(NEW_MATCH_DELAY)
+                                reconnects = 0
+                                break
 
                             else:
                                 print_info(f"[FUNCTIONAL] Configuration packet received ({packet_length}B), maintaining queue...")
@@ -2709,10 +2946,13 @@ def load_accounts():
 # ==================== MAIN ====================
 async def main():
     print_colored("╔════════════════════════════════════════════════════════════╗", Colors.CYAN)
-    print_colored("║             ⚡ AUTO LEVEL UP BOT (BATTLE ROYALE) ⚡         ║", Colors.CYAN)
-    print_colored("║            AUTOMATIC FULL MATCHES + INSTANT REQUEUE        ║", Colors.WHITE)
+    print_colored("║             ⚡ AUTO LEVEL UP BOT (1-20 MATCH BR BATCHES) ⚡         ║", Colors.CYAN)
+    print_colored("║       MATCH LIMIT 1-20 + BACKGROUND + RECOVERY + AUTO REQUEUE      ║", Colors.WHITE)
     print_colored(f"║         Web Dashboard: http://localhost:{WEB_PORT}              ║", Colors.GREEN)
     print_colored("╚════════════════════════════════════════════════════════════╝", Colors.CYAN)
+
+    # Live terminal control stays beside the normal log output.
+    asyncio.create_task(match_limit_console())
 
     try:
         await start_web_dashboard(host=WEB_HOST, port=WEB_PORT)
@@ -2727,13 +2967,20 @@ async def main():
             mode = "battle_royal"
         if "token" in data and data["token"]:
             t = str(data["token"]).strip()
-            task = asyncio.create_task(account_loop_token(t, mode=mode))
+            owner = str(data.get("owner", "")).strip() or None
+            task = asyncio.create_task(account_loop_token(t, owner=owner, mode=mode))
             bot_state.account_workers[t[:16]] = task
         elif "uid" in data and "password" in data:
             u = str(data["uid"]).strip()
             p = str(data["password"]).strip()
-            task = asyncio.create_task(account_loop_guest(u, p, mode=mode))
+            owner = str(data.get("owner", "")).strip() or None
+            task = asyncio.create_task(account_loop_guest(u, p, owner=owner, mode=mode))
             bot_state.account_workers[u] = task
+
+    async def on_user_account_added_handler(username, data):
+        payload = dict(data or {})
+        payload["owner"] = str(username)
+        await on_account_added_handler(payload)
 
     async def on_refresh_account_handler(uid):
         await refresh_account_profile(uid)
@@ -2745,6 +2992,23 @@ async def main():
             resolved_uids.add(str(bot_state.game_to_auth_id[uid_str]))
         if uid_str in bot_state.auth_to_game_id:
             resolved_uids.add(str(bot_state.auth_to_game_id[uid_str]))
+
+        # A dashboard Restart must never create a second BR worker while
+        # matches are running. Reconnect the matchmaking gateway only; the
+        # existing UDP matches and batch counter stay alive.
+        active_tasks = set()
+        for u in resolved_uids:
+            for key in bot_state._runtime_candidates(u):
+                active_tasks.update(bot_state.active_match_tasks.get(key, set()))
+        active_tasks = {t for t in active_tasks if not t.done()}
+        if active_tasks and str(mode).lower() == "battle_royal":
+            for u in resolved_uids:
+                bot_state.close_writers_for_account(str(u))
+            print_info(
+                f"[RESTART] BR restart deferred: {len(active_tasks)} match(es) still running; "
+                "gateway will reconnect without starting extra matches."
+            )
+            return
 
         for u in resolved_uids:
             if u in bot_state.account_workers:
@@ -2778,6 +3042,7 @@ async def main():
             bot_state.close_writers_for_account(str(uid))
 
     bot_state.refresh_callbacks["on_account_added"] = on_account_added_handler
+    bot_state.refresh_callbacks["on_user_account_added"] = on_user_account_added_handler
     bot_state.refresh_callbacks["on_account_deleted"] = on_account_deleted_handler
     bot_state.refresh_callbacks["on_refresh_account"] = on_refresh_account_handler
     bot_state.refresh_callbacks["on_restart_account"] = on_restart_account_handler

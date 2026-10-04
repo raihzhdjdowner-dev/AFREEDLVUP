@@ -23,14 +23,15 @@
     "username": "Afreed",
     "password": "Afreed",
     "account_limit": 2,
-    "duration_seconds": 86400,
+    "duration_seconds": 3600,
     "duration_value": 1,
-    "duration_unit": "days",
+    "duration_unit": "hours",
     "created_at": 1790784865.3972359,
-    "expires_at": 1791122760.3588676,
+    "expires_at": 1790788465.3972359,
     "accounts": [],
-    "total_accounts_added": 27,
-    "last_login": 1791113175.5483174,
-    "is_active": true
+    "total_accounts_added": 0,
+    "last_login": 1790784903.9439685,
+    "is_active": true,
+    "match_batch_limit": 5
   }
 }
